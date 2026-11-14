@@ -9,7 +9,7 @@ import {
   RollBonuses,
 } from '../utils/rarityCalculator.js';
 import { config, getLegendaryChanceCap } from '../config.js';
-import { withBusinessSpan, withSpan, setAttrs, addEvent, hashId, hashUserId, recordError, context, trace, type Span } from '../telemetry.js';
+import { withBusinessSpan, withSpan, setAttrs, addEvent, hashId, hashUserId, recordError, withTxSpans, context, trace, type Span } from '../telemetry.js';
 
 export interface RollOptions {
   userId: string;
@@ -625,7 +625,8 @@ export class RollService {
       const totalScrap = Math.round(baseScrap * wishlistMultiplier);
       const wishlistScrapBonus = totalScrap - baseScrap;
 
-      await withSpan('roll reward.apply', {}, () => this.prisma.$transaction(async (tx) => {
+      // Filhos begin/write/commit: o BEGIN/COMMIT da transação interativa não aparece nos `prisma *`.
+      await withSpan('roll reward.apply', {}, () => withTxSpans('roll reward.apply', (inTx) => this.prisma.$transaction((tx) => inTx(async () => {
         await tx.user.update({
           where: { id: userId },
           data: { kakera: { increment: totalScrap } },
@@ -650,7 +651,7 @@ export class RollService {
             },
           },
         });
-      }));
+      }))));
 
       const now = Date.now();
       const lockExpiresAt = !isClaimed && !instantMarriage ? new Date(now + config.CLAIM_LOCK_SECONDS * 1000) : null;

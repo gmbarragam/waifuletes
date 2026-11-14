@@ -249,3 +249,38 @@ export function withBusinessSpan<T>(name: string, attributes: AttrInput, fn: (sp
     }
   });
 }
+
+/**
+ * Transação interativa do Prisma com a duração repartida em filhos nomeados:
+ *  - `<name>.begin`: do pedido ao callback (BEGIN + ida e volta ao engine do Prisma);
+ *  - `<name>.write`: o corpo (os `prisma *` ficam abaixo dele);
+ *  - `<name>.commit`: do fim do corpo até a transação resolver (COMMIT).
+ * Uso: `withTxSpans('roll reward.apply', (inTx) => prisma.$transaction((tx) => inTx(() => corpo(tx))))`.
+ * Com a telemetria desligada só executa `run`. Não muda o comportamento da transação.
+ */
+export function withTxSpans<T>(name: string, run: (inTx: <R>(fn: () => Promise<R>) => Promise<R>) => Promise<T>): Promise<T> {
+  if (!isEnabled()) return run((fn) => fn());
+  const parent = context.active();
+  let begin: Span | undefined = startSpan(`${name}.begin`, {}, parent);
+  let commit: Span | undefined;
+  const inTx = async <R>(fn: () => Promise<R>): Promise<R> => {
+    begin?.end();
+    begin = undefined;
+    const r = await context.with(parent, () => withSpan(`${name}.write`, {}, () => fn()));
+    commit = startSpan(`${name}.commit`, {}, parent);
+    return r;
+  };
+  return run(inTx).then(
+    (v) => {
+      begin?.end();
+      commit?.end();
+      return v;
+    },
+    (err) => {
+      recordError(commit ?? begin, err);
+      begin?.end();
+      commit?.end();
+      throw err;
+    },
+  );
+}
