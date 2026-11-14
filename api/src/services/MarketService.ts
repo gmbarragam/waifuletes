@@ -4,7 +4,7 @@ import { DomainError } from '../errors/DomainError.js';
 import { CharacterService } from './CharacterService.js';
 import { CooldownService } from './CooldownService.js';
 import { NotificationService } from './NotificationService.js';
-import { withBusinessSpan, hashId, addEvent, setAttrs, setOutcome, recordError, activeSpan, reasonFromCode } from '../telemetry.js';
+import { withBusinessSpan, hashUserId, addEvent, setAttrs, setOutcome, recordError, activeSpan, reasonFromCode } from '../telemetry.js';
 
 export interface CreateOfferData {
   message?: string;
@@ -629,7 +629,7 @@ export class MarketService {
   }
 
   async createOffer(buyerId: string, listingId: string, data: CreateOfferData) {
-    return withBusinessSpan('market offer.create', { 'waifu.user.id_hash': hashId(buyerId) }, () =>
+    return withBusinessSpan('market offer.create', { 'waifu.user.id_hash': hashUserId(buyerId) }, () =>
       this.createOfferImpl(buyerId, listingId, data)
     );
   }
@@ -644,6 +644,8 @@ export class MarketService {
     if (!listing || listing.status !== ListingStatus.ACTIVE) {
       throw new DomainError('LISTING_NOT_ACTIVE', 'O anúncio não está mais disponível.');
     }
+
+    setAttrs({ 'waifu.seller.id_hash': hashUserId(listing.userId) });
 
     if (listing.userId === buyerId) {
       throw new DomainError('CANNOT_OFFER_OWN', 'Você não pode fazer oferta no seu próprio anúncio.');
@@ -923,7 +925,7 @@ export class MarketService {
    * Aceita uma oferta com validação em tempo real e transferência atômica multi-jogo
    */
   async acceptOffer(sellerId: string, offerId: string) {
-    return withBusinessSpan('market offer.accept', { 'waifu.user.id_hash': hashId(sellerId) }, () =>
+    return withBusinessSpan('market offer.accept', { 'waifu.user.id_hash': hashUserId(sellerId) }, () =>
       this.acceptOfferTraced(sellerId, offerId)
     );
   }
@@ -958,6 +960,8 @@ export class MarketService {
     if (!offer) {
       throw new DomainError('NOT_FOUND', 'Oferta não encontrada.');
     }
+
+    setAttrs({ 'waifu.buyer.id_hash': hashUserId(offer.buyerId) });
 
     if (offer.sellerId !== sellerId) {
       throw new DomainError('UNAUTHORIZED', 'Você não tem permissão para aceitar esta oferta.');

@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
 import { calculateDivorceRefund, getDailyDivorceRate } from '../utils/rarityCalculator.js';
 import { config } from '../config.js';
-import { withBusinessSpan, hashId, addEvent, setAttrs } from '../telemetry.js';
+import { withBusinessSpan, hashUserId, addEvent, setAttrs } from '../telemetry.js';
 import { MarketInvestmentService, BASE_MONEY_SUPPLY, INFLATION_ALPHA } from './MarketInvestmentService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
 
@@ -249,7 +249,7 @@ export class DivorceService {
   }
 
   async divorce(userId: string, characterId: string) {
-    return withBusinessSpan('divorce', { 'waifu.user.id_hash': hashId(userId) }, () => this.divorceImpl(userId, characterId));
+    return withBusinessSpan('divorce', { 'waifu.user.id_hash': hashUserId(userId) }, () => this.divorceImpl(userId, characterId));
   }
 
   private async divorceImpl(userId: string, characterId: string) {

@@ -14,7 +14,7 @@ import prismaPlugin from './plugins/prisma.js';
 import redisPlugin from './plugins/redis.js';
 import { isTrustedRequest } from './plugins/auth.js';
 import { DomainError } from './errors/DomainError.js';
-import { activeSpan, recordError } from './telemetry.js';
+import { activeSpan, recordError, tagRequestIds } from './telemetry.js';
 
 // Rotas públicas
 import { publicCharacterRoutes } from './routes/public/characters.js';
@@ -185,6 +185,13 @@ async function buildServer() {
   // Esvazia a fila de spans no encerramento (teto de 3 s; no-op sem telemetria).
   fastify.addHook('onClose', async () => {
     await (globalThis as any).__OTEL_SHUTDOWN?.();
+  });
+
+  // Hash do usuário/grupo (userId/groupId de params, corpo ou query) nos spans da requisição.
+  // preValidation: o corpo já foi lido e este hook não vira span (o @fastify/otel só instrumenta preHandler).
+  fastify.addHook('preValidation', (request, _reply, done) => {
+    tagRequestIds(request);
+    done();
   });
 
   // Plugins de infraestrutura

@@ -5,7 +5,7 @@
  * (tracer no-op; hashId devolve undefined sem calcular HMAC).
  *
  * Privacidade (ver OBSERVABILITY.md): NUNCA passar para atributos/eventos ID cru de usuário/grupo,
- * nomes, textos, chaves de Redis, segredos. IDs de pessoa só via hashId().
+ * nomes, textos, chaves de Redis, segredos. IDs de pessoa só via hashUserId(); grupos via hashId().
  */
 import crypto from 'node:crypto';
 import {
@@ -38,7 +38,83 @@ export function hashId(id: unknown): string | undefined {
   return crypto.createHmac('sha256', ID_SALT).update(String(id)).digest('hex').slice(0, 16);
 }
 
+/**
+ * Forma canônica do ID de pessoa para o HMAC, IGUAL à da ravena-ai (src/telemetry/index.js →
+ * hashUserId): tira o sufixo `@c.us`/`@lid`/`@s.whatsapp.net` e o `:device`. Idempotente.
+ * Assim `5511…@c.us`, `5511…` e `5511…:3@s.whatsapp.net` geram o mesmo hash nos 3 serviços e
+ * um operador com o OTEL_ID_SALT consegue recomputar o hash localmente.
+ */
+export function normalizeUserId(id: unknown): string | undefined {
+  if (id === undefined || id === null || id === '') return undefined;
+  const raw = String(id);
+  return raw.split('@')[0].split(':')[0] || raw;
+}
+
+/** hashId da forma canônica do usuário (ver normalizeUserId). Grupos/chats usam hashId cru. */
+export function hashUserId(id: unknown): string | undefined {
+  return hashId(normalizeUserId(id));
+}
+
 type AttrInput = Record<string, unknown> | undefined;
+
+const kServerSpan = Symbol.for('ravena.otel.server_span');
+
+/** Guarda o span SERVER do instrumentation-http no IncomingMessage (chamado pelo requestHook). */
+export function stashServerSpan(span: unknown, req: unknown): void {
+  if (span && req && typeof req === 'object' && (span as any).kind === SpanKind.SERVER) (req as any)[kServerSpan] = span;
+}
+
+/**
+ * Grava atributos nos spans da requisição HTTP de entrada: o SERVER (`POST /roll`) e o `request`
+ * do @fastify/otel. Usado para o hash do usuário/grupo em rotas sem span de negócio.
+ */
+export function setRequestAttrs(request: any, attrs: AttrInput): void {
+  if (!isEnabled() || !request) return;
+  const clean = cleanAttrs(attrs);
+  if (!clean || Object.keys(clean).length === 0) return;
+  const spans = new Set<Span>();
+  const server = request.raw?.[kServerSpan];
+  if (server) spans.add(server);
+  try {
+    const reqSpan = typeof request.opentelemetry === 'function' ? request.opentelemetry().span : undefined;
+    if (reqSpan) spans.add(reqSpan);
+  } catch {
+    /* sem @fastify/otel */
+  }
+  for (const s of spans) if (s.isRecording()) s.setAttributes(clean);
+}
+
+function pickId(...sources: any[]): unknown {
+  for (const src of sources) {
+    if (src && typeof src === 'object') {
+      for (const key of ['userId', 'user_id']) {
+        const v = src[key];
+        if (typeof v === 'string' || typeof v === 'number') return v;
+      }
+    }
+  }
+  return undefined;
+}
+
+function pickGroup(...sources: any[]): unknown {
+  for (const src of sources) {
+    const v = src && typeof src === 'object' ? src.groupId : undefined;
+    if (typeof v === 'string' || typeof v === 'number') return v;
+  }
+  return undefined;
+}
+
+/**
+ * Hook global (preValidation, depois do parse do corpo): `userId`/`groupId` de params, corpo ou
+ * query viram `waifu.user.id_hash`/`waifu.group.id_hash` nos spans da requisição.
+ */
+export function tagRequestIds(request: any): void {
+  if (!isEnabled() || !request) return;
+  const user = pickId(request.params, request.body, request.query);
+  const group = pickGroup(request.params, request.body, request.query);
+  if (user === undefined && group === undefined) return;
+  setRequestAttrs(request, { 'waifu.user.id_hash': hashUserId(user), 'waifu.group.id_hash': hashId(group) });
+}
 
 function cleanAttrs(attrs: AttrInput): Attributes | undefined {
   if (!attrs) return undefined;

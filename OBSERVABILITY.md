@@ -48,11 +48,15 @@ Para desligar: remova `OTEL_EXPORTER_OTLP_ENDPOINT` ou defina `OTEL_SDK_DISABLED
 - Prisma: spans manuais `prisma {Model}.{operação}` via `$extends` (ver Limitações).
 - Ignorados: `/health*`, `/favicon`, estáticos (`/media/`, `/css/`, `/js/`, `/vendor/`, `/assets/`, `/docs`).
 - Helpers de spans de negócio em `api/src/telemetry.ts` (`withSpan`, `withBusinessSpan`, `setAttrs`, `addEvent`,
-  `recordError`, `hashId`).
+  `recordError`, `hashUserId`, `hashId`, `setRequestAttrs`).
 
 ## Privacidade
 
 - Usuário/grupo **só** como `waifu.user.id_hash` / `waifu.group.id_hash` (HMAC-SHA256 com `OTEL_ID_SALT`, 16 hex).
+  Usuário via `hashUserId` (corta no primeiro `@` e no primeiro `:`, igual à ravena-ai); grupo via `hashId` do ID completo.
+  Mercado também grava `waifu.buyer.id_hash`/`waifu.seller.id_hash`.
+- Hook global `preValidation` (server.ts) grava os hashes de `userId`/`groupId` (params, corpo ou query) no span
+  SERVER e no `request` de toda rota, inclusive as sem span de negócio.
 - Nunca em spans: ID cru, nome, texto de sugestão/motivo, prompt/resposta de LLM, chaves do Redis, segredos, headers.
 - Redis grava só o nome do comando (`db.query.text = "get"`); chaves carregam token de sessão e userId.
 - Prisma não grava args nem SQL.

@@ -11,7 +11,7 @@ import { TelegramNotificationService } from './TelegramNotificationService.js';
 import { NotificationService } from './NotificationService.js';
 import { RarityAdvisorService } from './RarityAdvisorService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
-import { withBusinessSpan, hashId, setAttrs } from '../telemetry.js';
+import { withBusinessSpan, hashUserId, setAttrs } from '../telemetry.js';
 
 export type SuggestionBlockDuration = '24h' | '7d' | '30d' | 'forever';
 
@@ -224,7 +224,7 @@ export class SuggestionService {
    * Envia uma sugestão de nova raridade para um personagem
    */
   async submitRaritySuggestion(userId: string, characterId: string, suggestedRarity: Rarity, reason: string) {
-    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'RARITY', 'waifu.user.id_hash': hashId(userId) }, () =>
+    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'RARITY', 'waifu.user.id_hash': hashUserId(userId) }, () =>
       this.submitRaritySuggestionImpl(userId, characterId, suggestedRarity, reason)
     );
   }
@@ -357,7 +357,7 @@ export class SuggestionService {
         'waifu.suggestion.type': 'IMAGE',
         'waifu.suggestion.photo_action': action,
         'waifu.upload.bytes': imageBuffer?.length,
-        'waifu.user.id_hash': hashId(userId),
+        'waifu.user.id_hash': hashUserId(userId),
       },
       () => this.submitImageSuggestionImpl(userId, characterId, imageBuffer, reason, action, targetPhoto)
     );
@@ -499,7 +499,7 @@ export class SuggestionService {
       reason: string;
     }
   ) {
-    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'EDIT', 'waifu.user.id_hash': hashId(userId) }, () =>
+    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'EDIT', 'waifu.user.id_hash': hashUserId(userId) }, () =>
       this.submitEditSuggestionImpl(userId, characterId, data)
     );
   }
@@ -672,7 +672,7 @@ export class SuggestionService {
   ) {
     return withBusinessSpan(
       'suggestion submit',
-      { 'waifu.suggestion.type': 'NEW_CHARACTER', 'waifu.upload.bytes': data?.imageBuffer?.length, 'waifu.user.id_hash': hashId(userId) },
+      { 'waifu.suggestion.type': 'NEW_CHARACTER', 'waifu.upload.bytes': data?.imageBuffer?.length, 'waifu.user.id_hash': hashUserId(userId) },
       () => this.submitNewCharacterSuggestionImpl(userId, data)
     );
   }
@@ -798,7 +798,7 @@ export class SuggestionService {
    * Envia uma denúncia de exclusão para um personagem (botão 🔞 na home ou comando WhatsApp)
    */
   async submitDeleteSuggestion(characterId: string, userId?: string, reason?: string, explicitUserName?: string) {
-    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'DELETE_CHARACTER', 'waifu.user.id_hash': hashId(userId) }, () =>
+    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'DELETE_CHARACTER', 'waifu.user.id_hash': hashUserId(userId) }, () =>
       this.submitDeleteSuggestionImpl(characterId, userId, reason, explicitUserName)
     );
   }

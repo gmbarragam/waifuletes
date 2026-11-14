@@ -3,7 +3,7 @@ import { CooldownService } from './CooldownService.js';
 import { CharacterService } from './CharacterService.js';
 import { UserService } from './UserService.js';
 import { config } from '../config.js';
-import { withBusinessSpan, hashId, addEvent, setAttrs } from '../telemetry.js';
+import { withBusinessSpan, hashId, hashUserId, addEvent, setAttrs } from '../telemetry.js';
 
 export interface MarryParams {
   userId: string;
@@ -23,7 +23,7 @@ export class MarryService {
   async marry(params: MarryParams) {
     return withBusinessSpan(
       'marry',
-      { 'waifu.user.id_hash': hashId(params.userId), 'waifu.group.id_hash': hashId(params.groupId) },
+      { 'waifu.user.id_hash': hashUserId(params.userId), 'waifu.group.id_hash': hashId(params.groupId) },
       () => this.marryImpl(params)
     );
   }
