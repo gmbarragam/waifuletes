@@ -282,7 +282,7 @@ async function start(): Promise<void> {
         ignoreOutgoingRequestHook: (opts) => IGNORED_OUTGOING.some((re) => re.test(opts.path || '')),
         requestHook: (span, req) => {
           sanitizeSpanUrls(span);
-          // Guarda o span SERVER no IncomingMessage: o hook global do server.ts grava nele o hash
+          // Guarda o span SERVER no IncomingMessage: o hook global do server.ts grava nele o ID
           // do usuário/grupo (telemetry.ts → setRequestAttrs).
           if ((span as any).kind === SPAN_KIND_SERVER) (req as any)[Symbol.for('ravena.otel.server_span')] = span;
         },

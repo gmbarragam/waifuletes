@@ -7,14 +7,15 @@ ecossistema Ravena. A telemetria é **opcional** e fica **desligada por padrão*
 
 1. Suba o backend (uma vez, no host), que fica no repositório da ravena:
    ```bash
-   cd ravena-ai/observability && docker compose up -d
+   cd ravena-ai && docker compose -f observability/docker-compose.yml up -d
    ```
+   Antes, crie `ravena-ai/observability/.env` a partir do `.env.example` (senha do Grafana e, no Linux, `OTEL_BIND_ADDR=172.17.0.1`).
+   Leia "Segurança" no `OBSERVABILITY.md` da ravena-ai: os traces têm o ID do usuário e a stack não pode ficar exposta.
    Collector OTLP/HTTP em `:4318` (o gRPC `:4317` não é publicado; o exporter do waifuletes é `otlp-proto` via HTTP), Jaeger em http://localhost:16686, Grafana em http://localhost:3001.
 2. No `.env` deste repo (o `docker-compose.yml` já usa `env_file: .env`, nada a mudar no compose):
    ```env
    OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318
    OTEL_SERVICE_NAME=waifuletes
-   OTEL_ID_SALT=<o mesmo valor usado na ravena-ai e no jardim-das-sombras>
    ```
 3. `docker compose up -d api` (recria só o container da API). No log aparece
    `[otel] telemetria ligada -> http://host.docker.internal:4318`.
@@ -28,7 +29,6 @@ Para desligar: remova `OTEL_EXPORTER_OTLP_ENDPOINT` ou defina `OTEL_SDK_DISABLED
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | vazio | Liga a telemetria. Sem ela (ou sem `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) nada do SDK é carregado. |
 | `OTEL_SDK_DISABLED` | vazio | `true` desliga mesmo com endpoint. |
 | `OTEL_SERVICE_NAME` | `waifuletes` | `service.name` dos spans. |
-| `OTEL_ID_SALT` | aleatório por processo | Segredo do HMAC dos IDs de usuário/grupo. Igual nos 3 serviços para correlacionar. |
 | `OTEL_LOG_LEVEL` | `error` | Log interno do SDK (erros de export aparecem aqui). |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Intervalo de export de métricas (ms). |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | `NODE_ENV` | `deployment.environment.name`. |
@@ -48,16 +48,17 @@ Para desligar: remova `OTEL_EXPORTER_OTLP_ENDPOINT` ou defina `OTEL_SDK_DISABLED
 - Prisma: spans manuais `prisma {Model}.{operação}` via `$extends` (ver Limitações).
 - Ignorados: `/health*`, `/favicon`, estáticos (`/media/`, `/css/`, `/js/`, `/vendor/`, `/assets/`, `/docs`).
 - Helpers de spans de negócio em `api/src/telemetry.ts` (`withSpan`, `withBusinessSpan`, `setAttrs`, `addEvent`,
-  `recordError`, `hashUserId`, `hashId`, `setRequestAttrs`).
+  `recordError`, `userIdAttr`, `chatIdAttr`, `setRequestAttrs`).
 
 ## Privacidade
 
-- Usuário/grupo **só** como `waifu.user.id_hash` / `waifu.group.id_hash` (HMAC-SHA256 com `OTEL_ID_SALT`, 16 hex).
-  Usuário via `hashUserId` (corta no primeiro `@` e no primeiro `:`, igual à ravena-ai); grupo via `hashId` do ID completo.
-  Mercado também grava `waifu.buyer.id_hash`/`waifu.seller.id_hash`.
-- Hook global `preValidation` (server.ts) grava os hashes de `userId`/`groupId` (params, corpo ou query) no span
+- Usuário e grupo entram como ID (telefone/ID da plataforma) em `waifu.user.id` / `waifu.group.id`, para poder
+  investigar um caso. Usuário via `userIdAttr` (corta no primeiro `@` e no primeiro `:`, igual à ravena-ai); grupo via
+  `chatIdAttr`, com o ID completo. Mercado também grava `waifu.buyer.id`/`waifu.seller.id`.
+  Por isso a stack de observabilidade só pode ficar acessível no próprio host.
+- Hook global `preValidation` (server.ts) grava os IDs de `userId`/`groupId` (params, corpo ou query) no span
   SERVER e no `request` de toda rota, inclusive as sem span de negócio.
-- Nunca em spans: ID cru, nome, texto de sugestão/motivo, prompt/resposta de LLM, chaves do Redis, segredos, headers.
+- Nunca em spans: nome, texto de sugestão/motivo, prompt/resposta de LLM, chaves do Redis, segredos, headers.
 - Redis grava só o nome do comando (`db.query.text = "get"`); chaves carregam token de sessão e userId.
 - Prisma não grava args nem SQL.
 - URLs (`api/src/telemetryUrl.ts`, aplicado por um SpanProcessor antes do export):
@@ -114,7 +115,7 @@ Service `waifuletes`, campo **Tags**:
 - Erros reais (não rejeições): `app.outcome=error` ou `error=true`.
 - Rejeições por motivo: `app.reject.reason=claim_cooldown_active`.
 - Conselheiro de IA sem cache: `waifu.ai.cache=miss`.
-- Todos os traces de um usuário: `waifu.user.id_hash=<hash>` (o mesmo hash na ravena-ai se o salt for igual).
+- Todos os traces de um usuário: `waifu.user.id=5511999999999` (mesmo valor de `ravena.user.id` na ravena-ai).
 - Rota HTTP: `http.route=/roll`.
 
 Pelos logs: `docker logs waifuletes-api | grep <trace_id>` (linhas do pino carregam `trace_id`/`span_id`).
@@ -138,15 +139,3 @@ curl "localhost:16686/api/v3/traces?query.service_name=waifuletes&query.operatio
 - Redis: `get`/`ttl` são ~metade dos spans. O `@opentelemetry/instrumentation-ioredis` 0.71 não tem opção para
   pular comandos de pipeline/multi (só prefixa o nome); o corte fica no collector (`filter/fast-redis`, spans Redis
   < 1 ms).
-
-## Identificar um usuário a partir de um trace (operador autorizado)
-
-Os spans só têm pseudônimos (`waifu.user.id_hash`). Quem tem acesso à máquina e ao `OTEL_ID_SALT` usa a ferramenta da ravena-ai, que recalcula o HMAC localmente e consulta também este serviço (via `docker exec`):
-
-```bash
-cd ../ravena-ai
-python3 observability/tools/quem-e.py <id_hash>        # hash → ID (+ nome/apelido)
-python3 observability/tools/quem-e.py --id <ID>        # ID → hashes + links do Jaeger
-```
-
-O hash de um mesmo usuário é **igual nos 3 serviços**: usuário = ID sem sufixo, cortado no primeiro `@` e no primeiro `:`. Grupo = ID completo. O salt nunca é impresso. O resultado é dado pessoal e serve só para a investigação. Detalhes no `OBSERVABILITY.md` da ravena-ai, seção 4.

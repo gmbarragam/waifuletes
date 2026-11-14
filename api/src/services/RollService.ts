@@ -9,7 +9,7 @@ import {
   RollBonuses,
 } from '../utils/rarityCalculator.js';
 import { config, getLegendaryChanceCap } from '../config.js';
-import { withBusinessSpan, withSpan, setAttrs, addEvent, hashId, hashUserId, recordError, withTxSpans, context, trace, type Span } from '../telemetry.js';
+import { withBusinessSpan, withSpan, setAttrs, addEvent, chatIdAttr, userIdAttr, recordError, withTxSpans, context, trace, type Span } from '../telemetry.js';
 
 export interface RollOptions {
   userId: string;
@@ -126,8 +126,8 @@ export class RollService {
     return withBusinessSpan(
       'roll',
       {
-        'waifu.user.id_hash': hashUserId(options.userId),
-        'waifu.group.id_hash': hashId(options.groupId),
+        'waifu.user.id': userIdAttr(options.userId),
+        'waifu.group.id': chatIdAttr(options.groupId),
         'waifu.roll.free': Boolean(options.bonuses?.isFreeRoll),
         'waifu.roll.gender_filter': options.genderFilter,
       },

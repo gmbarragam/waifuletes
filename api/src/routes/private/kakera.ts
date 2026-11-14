@@ -3,7 +3,7 @@ import { KakeraService } from '../../services/KakeraService.js';
 import { CooldownService } from '../../services/CooldownService.js';
 import { UserService } from '../../services/UserService.js';
 import { verifyApiKey } from '../../plugins/auth.js';
-import { withBusinessSpan, hashId, hashUserId, setOutcome } from '../../telemetry.js';
+import { withBusinessSpan, chatIdAttr, userIdAttr, setOutcome } from '../../telemetry.js';
 
 export const privateKakeraRoutes: FastifyPluginAsync = async (fastify) => {
   const cooldownService = new CooldownService(fastify.redis);
@@ -24,7 +24,7 @@ export const privateKakeraRoutes: FastifyPluginAsync = async (fastify) => {
     },
     handler: async (request, reply) => {
       const { userId } = request.params as { userId: string };
-      const balance = await withBusinessSpan('kakera balance', { 'waifu.user.id_hash': hashUserId(userId) }, async (span) => {
+      const balance = await withBusinessSpan('kakera balance', { 'waifu.user.id': userIdAttr(userId) }, async (span) => {
         const b = await kakeraService.getBalance(userId);
         if (!b) setOutcome('rejected', 'user_not_found', span);
         return b;
@@ -65,7 +65,7 @@ export const privateKakeraRoutes: FastifyPluginAsync = async (fastify) => {
       // app.outcome=rejected + app.reject.reason=<código em minúsculas>; sucesso vira ok.
       const result = await withBusinessSpan(
         'kakera daily',
-        { 'waifu.user.id_hash': hashUserId(body.userId), 'waifu.group.id_hash': hashId(body.groupId) },
+        { 'waifu.user.id': userIdAttr(body.userId), 'waifu.group.id': chatIdAttr(body.groupId) },
         async () => {
           if (body.groupId) {
             await userService.ensureUserAndGroup({
@@ -107,7 +107,7 @@ export const privateKakeraRoutes: FastifyPluginAsync = async (fastify) => {
       const { userId } = request.params as { userId: string };
       const query = request.query as any;
 
-      const result = await withBusinessSpan('kakera history', { 'waifu.user.id_hash': hashUserId(userId) }, () =>
+      const result = await withBusinessSpan('kakera history', { 'waifu.user.id': userIdAttr(userId) }, () =>
         kakeraService.getHistory(userId, query.page ? Number(query.page) : 1, query.limit ? Number(query.limit) : 20)
       );
 

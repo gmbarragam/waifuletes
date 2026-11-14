@@ -2,12 +2,13 @@
  * Helpers de tracing de negócio do waifuletes (mesma API de ravena-ai/src/telemetry/index.js).
  *
  * Só depende de @opentelemetry/api: com a telemetria desligada, tudo aqui é no-op barato
- * (tracer no-op; hashId devolve undefined sem calcular HMAC).
+ * (tracer no-op; userIdAttr/chatIdAttr devolvem undefined).
  *
- * Privacidade (ver OBSERVABILITY.md): NUNCA passar para atributos/eventos ID cru de usuário/grupo,
- * nomes, textos, chaves de Redis, segredos. IDs de pessoa só via hashUserId(); grupos via hashId().
+ * Privacidade (ver OBSERVABILITY.md): usuário (e grupo) entram como ID (telefone/ID da plataforma)
+ * SÓ via userIdAttr()/chatIdAttr(), nos atributos *.user.id / *.group.id. NUNCA passar nomes,
+ * textos livres, chaves de Redis ou segredos. Por isso a stack de observabilidade não pode ficar
+ * exposta fora do host (ver OBSERVABILITY.md da ravena-ai, "Segurança").
  */
-import crypto from 'node:crypto';
 import {
   trace,
   context,
@@ -26,23 +27,20 @@ export type { Span };
 
 export const tracer = trace.getTracer('waifuletes');
 
-const ID_SALT = process.env.OTEL_ID_SALT || crypto.randomBytes(32).toString('hex');
-
 export function isEnabled(): boolean {
   return (globalThis as any).__OTEL_ENABLED === true;
 }
 
-/** Pseudônimo estável (HMAC-SHA256 truncado em 16 hex) para IDs de usuário/grupo. undefined se desligado. */
-export function hashId(id: unknown): string | undefined {
+/** ID de grupo/chat como está (ex.: 1203…@g.us). undefined se desligado ou vazio. */
+export function chatIdAttr(id: unknown): string | undefined {
   if (!isEnabled() || id === undefined || id === null || id === '') return undefined;
-  return crypto.createHmac('sha256', ID_SALT).update(String(id)).digest('hex').slice(0, 16);
+  return String(id);
 }
 
 /**
- * Forma canônica do ID de pessoa para o HMAC, IGUAL à da ravena-ai (src/telemetry/index.js →
- * hashUserId): tira o sufixo `@c.us`/`@lid`/`@s.whatsapp.net` e o `:device`. Idempotente.
- * Assim `5511…@c.us`, `5511…` e `5511…:3@s.whatsapp.net` geram o mesmo hash nos 3 serviços e
- * um operador com o OTEL_ID_SALT consegue recomputar o hash localmente.
+ * Forma canônica do ID de pessoa, IGUAL à da ravena-ai (src/telemetry/index.js → userIdAttr):
+ * tira o sufixo `@c.us`/`@lid`/`@s.whatsapp.net` e o `:device`. Idempotente. Assim `5511…@c.us`,
+ * `5511…` e `5511…:3@s.whatsapp.net` viram o mesmo valor nos 3 serviços.
  */
 export function normalizeUserId(id: unknown): string | undefined {
   if (id === undefined || id === null || id === '') return undefined;
@@ -50,9 +48,10 @@ export function normalizeUserId(id: unknown): string | undefined {
   return raw.split('@')[0].split(':')[0] || raw;
 }
 
-/** hashId da forma canônica do usuário (ver normalizeUserId). Grupos/chats usam hashId cru. */
-export function hashUserId(id: unknown): string | undefined {
-  return hashId(normalizeUserId(id));
+/** ID do usuário na forma canônica (ver normalizeUserId). undefined se desligado ou vazio. */
+export function userIdAttr(id: unknown): string | undefined {
+  if (!isEnabled()) return undefined;
+  return normalizeUserId(id);
 }
 
 type AttrInput = Record<string, unknown> | undefined;
@@ -66,7 +65,7 @@ export function stashServerSpan(span: unknown, req: unknown): void {
 
 /**
  * Grava atributos nos spans da requisição HTTP de entrada: o SERVER (`POST /roll`) e o `request`
- * do @fastify/otel. Usado para o hash do usuário/grupo em rotas sem span de negócio.
+ * do @fastify/otel. Usado para o ID do usuário/grupo em rotas sem span de negócio.
  */
 export function setRequestAttrs(request: any, attrs: AttrInput): void {
   if (!isEnabled() || !request) return;
@@ -106,14 +105,14 @@ function pickGroup(...sources: any[]): unknown {
 
 /**
  * Hook global (preValidation, depois do parse do corpo): `userId`/`groupId` de params, corpo ou
- * query viram `waifu.user.id_hash`/`waifu.group.id_hash` nos spans da requisição.
+ * query viram `waifu.user.id`/`waifu.group.id` nos spans da requisição.
  */
 export function tagRequestIds(request: any): void {
   if (!isEnabled() || !request) return;
   const user = pickId(request.params, request.body, request.query);
   const group = pickGroup(request.params, request.body, request.query);
   if (user === undefined && group === undefined) return;
-  setRequestAttrs(request, { 'waifu.user.id_hash': hashUserId(user), 'waifu.group.id_hash': hashId(group) });
+  setRequestAttrs(request, { 'waifu.user.id': userIdAttr(user), 'waifu.group.id': chatIdAttr(group) });
 }
 
 function cleanAttrs(attrs: AttrInput): Attributes | undefined {
