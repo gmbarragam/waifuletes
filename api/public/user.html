@@ -1154,7 +1154,7 @@
               <div class="form-group" style="margin-bottom: 8px;">
                 <label class="retro-label">Quantidade de Zinthos a oferecer:</label>
                 <div style="display: flex; gap: 8px; align-items: center;">
-                  <input type="number" id="offer-zinthos-input" class="retro-input" min="0" step="1" value="0" placeholder="0" oninput="updateOfferZinthosSpreadNote()">
+                  <input type="number" id="offer-zinthos-input" class="retro-input" min="0" step="1" value="0" placeholder="0" oninput="window.updateOfferZinthosSpreadNote && window.updateOfferZinthosSpreadNote()">
                   <button type="button" class="btn-retro btn-sm" onclick="setOfferZinthosMax()">Máximo</button>
                   <button type="button" class="btn-retro btn-sm btn-danger" onclick="setOfferZinthosZero()">Zerar</button>
                 </div>
@@ -1959,6 +1959,6 @@
 
   <script src="/vendor/cropper.min.js"></script>
   <script src="/js/api.js?v=20261113-modal-focus"></script>
-  <script src="/js/user.js?v=20261113-market-rarity-filter"></script>
+  <script src="/js/user.js?v=20261114-zinthos-spread-fix"></script>
 </body>
 </html>
