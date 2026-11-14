@@ -32,7 +32,10 @@ function sanitizeUrl(value: string): string {
     .replace(LONG_DIGITS, '{n}');
 }
 
-/** Reescreve os atributos de URL já gravados no span (o SDK expõe `attributes` no span real). */
+/**
+ * Primeira passada, no requestHook (antes de qualquer processor): tira token/segredo/dígitos longos.
+ * A versão final (rota + allowlist de query / origem + caminho mascarado) é aplicada no onEnding.
+ */
 function sanitizeSpanUrls(span: any): void {
   const attrs = span?.attributes;
   if (!attrs) return;
@@ -46,6 +49,137 @@ function sanitizeSpanUrls(span: any): void {
   }
 }
 
+const FASTIFY_SCOPE = '@fastify/otel';
+const STATUS_UNSET = 0;
+const STATUS_ERROR = 2;
+const SPAN_KIND_SERVER = 1;
+const SPAN_KIND_CLIENT = 2;
+const kClientError = Symbol('otel.clientError');
+
+/** Erro "de negócio" (4xx): DomainError, erro de validação do Fastify ou qualquer statusCode < 500. */
+function isClientError(err: any): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if (err.validation) return true;
+  const sc = Number(err.statusCode ?? err.status);
+  return Number.isFinite(sc) && sc >= 400 && sc < 500;
+}
+
+function errorTypeOf(err: any): string {
+  const code = typeof err?.code === 'string' && /^[A-Z0-9_]{1,48}$/.test(err.code) ? err.code : undefined;
+  return code || (err?.validation ? 'VALIDATION_ERROR' : String(err?.name || 'Error').slice(0, 48));
+}
+
+/**
+ * Normaliza spans antes do export (roda no onEnding, quando o span ainda aceita escrita):
+ *  - spans do @fastify/otel que terminaram ERROR por um 4xx de negócio voltam a UNSET (semconv:
+ *    4xx no servidor não é erro do serviço) e perdem a mensagem do status;
+ *  - exceções 4xx gravadas nesses spans ficam só com o tipo/código (a mensagem traz input do usuário);
+ *  - url.path de servidor = http.route; url.query por allowlist; url.full de cliente sem query e
+ *    com segmentos de ID mascarados.
+ */
+function createNormalizingProcessor(urls: typeof import('./telemetryUrl.js')) {
+  return {
+    onStart(span: any) {
+      if (span?.instrumentationScope?.name !== FASTIFY_SCOPE) return;
+      const original = span.recordException.bind(span);
+      span.recordException = (exception: any, time?: any) => {
+        if (isClientError(exception)) {
+          span[kClientError] = true;
+          span.addEvent('exception', { 'exception.type': errorTypeOf(exception) }, time);
+          return;
+        }
+        original(exception, time);
+      };
+    },
+    onEnding(span: any) {
+      const attrs = span?.attributes || {};
+      if (span?.instrumentationScope?.name === FASTIFY_SCOPE && span.status?.code === STATUS_ERROR) {
+        const sc = Number(attrs['http.response.status_code'] ?? attrs['http.status_code']);
+        const is4xx = Number.isFinite(sc) ? sc < 500 : span[kClientError] === true;
+        if (is4xx) span.status = { code: STATUS_UNSET };
+      }
+      // O span `request` do @fastify/otel é INTERNAL e repete o status HTTP do span SERVER pai. Na
+      // leitura, o Jaeger deriva o status de spans sem status explícito a partir do código HTTP com
+      // a regra de cliente (4xx -> ERROR): um 4xx de negócio aparecia como erro mesmo exportado
+      // UNSET. Para 4xx o atributo sai do span interno (continua no span SERVER `POST /rota`).
+      if (span?.instrumentationScope?.name === FASTIFY_SCOPE && span.status?.code !== STATUS_ERROR) {
+        const sc = Number(attrs['http.response.status_code']);
+        if (sc >= 400 && sc < 500) delete attrs['http.response.status_code'];
+      }
+
+      const isServer = span?.kind === SPAN_KIND_SERVER || span?.instrumentationScope?.name === FASTIFY_SCOPE;
+      if (isServer) {
+        if (typeof attrs['url.path'] === 'string' || typeof attrs['http.target'] === 'string') {
+          const path = urls.serverPath(attrs['http.route'], attrs['url.path'] ?? attrs['http.target']);
+          if (path !== undefined) {
+            if (typeof attrs['url.path'] === 'string') span.setAttribute('url.path', path);
+            if (typeof attrs['http.target'] === 'string') span.setAttribute('http.target', path);
+          }
+        }
+        if (typeof attrs['url.query'] === 'string') span.setAttribute('url.query', urls.sanitizeQuery(attrs['url.query']));
+      } else if (span?.kind === SPAN_KIND_CLIENT) {
+        for (const key of ['url.full', 'http.url']) {
+          if (typeof attrs[key] === 'string') span.setAttribute(key, urls.clientUrl(attrs[key]));
+        }
+        if (typeof attrs['url.path'] === 'string') span.setAttribute('url.path', urls.maskClientPath(attrs['url.path'].split('?')[0]));
+        if (typeof attrs['http.target'] === 'string') span.setAttribute('http.target', urls.maskClientPath(attrs['http.target'].split('?')[0]));
+        if (typeof attrs['url.query'] === 'string') span.setAttribute('url.query', 'REDACTED');
+      }
+    },
+    onEnd() {},
+    forceFlush: () => Promise.resolve(),
+    shutdown: () => Promise.resolve(),
+  };
+}
+
+/**
+ * Diag logger enxuto: só a 1ª linha da mensagem (sem stack) e no máximo 1 vez por minuto por tipo
+ * (ex.: ECONNREFUSED a cada export enquanto o collector está fora do ar).
+ */
+function createQuietDiagLogger() {
+  const lastByKey = new Map<string, number>();
+  const firstLine = (v: unknown): string => {
+    if (v instanceof Error) return `${v.name}: ${v.message}`.split('\n')[0];
+    if (v && typeof v === 'object') {
+      const o = v as any;
+      if (typeof o.message === 'string') return String(o.code ? `${o.code} ${o.message}` : o.message).split('\n')[0];
+      try {
+        return JSON.stringify(v).slice(0, 200);
+      } catch {
+        return '[obj]';
+      }
+    }
+    const str = String(v);
+    // O exporter OTLP serializa o erro em JSON ({"stack": ..., "message": ..., "code": ...}).
+    if (str.startsWith('{')) {
+      try {
+        const o = JSON.parse(str);
+        if (o && typeof o.message === 'string') return String(o.code ? `${o.code} ${o.message}` : o.message).split('\n')[0];
+      } catch {
+        /* não é JSON */
+      }
+    }
+    return str.split('\n')[0];
+  };
+  const emit = (level: 'error' | 'warn' | 'info' | 'debug', message: string, args: unknown[]) => {
+    const line = [firstLine(message), ...args.slice(0, 2).map(firstLine)].join(' ').slice(0, 300);
+    const key = `${level}:${line.replace(/\d+/g, '#').slice(0, 120)}`;
+    const now = Date.now();
+    const last = lastByKey.get(key);
+    if (last !== undefined && now - last < 60_000) return;
+    if (lastByKey.size > 200) lastByKey.clear();
+    lastByKey.set(key, now);
+    console[level](`[otel] ${line}`);
+  };
+  return {
+    error: (m: string, ...a: unknown[]) => emit('error', m, a),
+    warn: (m: string, ...a: unknown[]) => emit('warn', m, a),
+    info: (m: string, ...a: unknown[]) => emit('info', m, a),
+    debug: (m: string, ...a: unknown[]) => emit('debug', m, a),
+    verbose: (m: string, ...a: unknown[]) => emit('debug', m, a),
+  };
+}
+
 async function start(): Promise<void> {
   // Hook ESM: só o ioredis precisa (é importado direto de ESM; http/pino entram via require
   // do fastify e o undici via diagnostics_channel).
@@ -54,7 +188,7 @@ async function start(): Promise<void> {
 
   const [
     { NodeSDK },
-    { diag, DiagConsoleLogger, DiagLogLevel },
+    { diag, DiagLogLevel },
     { resourceFromAttributes },
     { OTLPTraceExporter },
     { OTLPMetricExporter },
@@ -67,6 +201,7 @@ async function start(): Promise<void> {
     { RuntimeNodeInstrumentation },
     fastifyOtel,
     fs,
+    telemetryUrl,
   ] = await Promise.all([
     import('@opentelemetry/sdk-node'),
     import('@opentelemetry/api'),
@@ -82,12 +217,13 @@ async function start(): Promise<void> {
     import('@opentelemetry/instrumentation-runtime-node'),
     import('@fastify/otel'),
     import('node:fs'),
+    import('./telemetryUrl.js'),
   ]);
   const FastifyOtelInstrumentation = (fastifyOtel as any).FastifyOtelInstrumentation ?? (fastifyOtel as any).default?.FastifyOtelInstrumentation;
 
   // Erros de export (collector fora do ar) só aparecem no diag logger, nunca derrubam o processo.
   const level = (process.env.OTEL_LOG_LEVEL || 'error').toUpperCase() as keyof typeof DiagLogLevel;
-  diag.setLogger(new DiagConsoleLogger(), DiagLogLevel[level] ?? DiagLogLevel.ERROR);
+  diag.setLogger(createQuietDiagLogger(), DiagLogLevel[level] ?? DiagLogLevel.ERROR);
 
   let version = 'unknown';
   try {
@@ -113,6 +249,8 @@ async function start(): Promise<void> {
     resource,
     // Fila limitada: se o collector cair, spans excedentes são descartados (nunca bloqueia).
     spanProcessors: [
+      // Antes do batch: normaliza status de 4xx e URLs enquanto o span ainda aceita escrita.
+      createNormalizingProcessor(telemetryUrl) as any,
       new BatchSpanProcessor(new OTLPTraceExporter({ timeoutMillis: 10000 }), {
         maxQueueSize: 4096,
         maxExportBatchSize: 512,
