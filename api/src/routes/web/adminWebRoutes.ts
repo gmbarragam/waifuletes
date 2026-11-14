@@ -1262,6 +1262,135 @@ export const adminWebRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * Listagem administrativa de personagens confiscados por inatividade e métricas de operação
+   */
+  fastify.get('/api/admin/inactivity', {
+    preHandler: requireAdminAuth,
+    schema: {
+      description: 'Lista personagens confiscados por taxa de hospedagem/inatividade e métricas de status operacional do sistema',
+      tags: ['Admin (Web)'],
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          search: { type: 'string' },
+          page: { type: 'integer', minimum: 1, default: 1 },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const query = request.query as { search?: string; page?: number; limit?: number };
+      const page = Math.max(1, Number(query.page) || 1);
+      const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+      const skip = (page - 1) * limit;
+      const search = query.search?.trim() || '';
+
+      const whereClause: any = {
+        reason: 'HOSTING_FEE_WAIFU',
+      };
+
+      if (search) {
+        whereClause.OR = [
+          { user: { name: { contains: search, mode: 'insensitive' } } },
+          { user: { id: { contains: search, mode: 'insensitive' } } },
+          { user: { publicId: { contains: search, mode: 'insensitive' } } },
+        ];
+      }
+
+      const [total, transactions, sumResult, usersCountResult, latestTx] = await Promise.all([
+        fastify.prisma.kakeraTransaction.count({ where: whereClause }),
+        fastify.prisma.kakeraTransaction.findMany({
+          where: whereClause,
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                publicId: true,
+                platform: true,
+                lastActiveAt: true,
+                kakera: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+        }),
+        fastify.prisma.kakeraTransaction.aggregate({
+          where: { reason: 'HOSTING_FEE_WAIFU' },
+          _sum: { amount: true },
+          _count: { id: true },
+        }),
+        fastify.prisma.$queryRaw<{ count: bigint }[]>`
+          SELECT COUNT(DISTINCT "userId") as count
+          FROM kakera_transactions
+          WHERE "reason" = 'HOSTING_FEE_WAIFU'::"KakeraReason"
+        `,
+        fastify.prisma.kakeraTransaction.findFirst({
+          where: { reason: 'HOSTING_FEE_WAIFU' },
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true },
+        }),
+      ]);
+
+      const items = transactions.map((tx) => {
+        const meta = (tx.metadata as any) || {};
+        return {
+          id: tx.id,
+          createdAt: tx.createdAt,
+          user: tx.user,
+          character: {
+            id: meta.characterId || 'desconhecido',
+            name: meta.characterName || meta.characterId || 'Personagem',
+            rarity: meta.rarity || 'COMMON',
+            isSoulmate: Boolean(meta.isSoulmate),
+          },
+          recoveredValue: tx.amount,
+          feeDate: meta.feeDate || null,
+          debtBefore: meta.debtBefore ?? null,
+          debtAfter: meta.debtAfter ?? null,
+          confiscoRatio: meta.confiscoRatio ?? 0.3,
+        };
+      });
+
+      const totalZinthosRecovered = sumResult._sum.amount || 0;
+      const totalConfiscated = sumResult._count.id || 0;
+      const totalUsersAffected = Number(usersCountResult[0]?.count || 0);
+      const lastExecution = latestTx?.createdAt || null;
+
+      const hoursSinceLastExecution = lastExecution
+        ? (Date.now() - new Date(lastExecution).getTime()) / (1000 * 60 * 60)
+        : null;
+      const isSystemOperational = Boolean(
+        lastExecution !== null ? (hoursSinceLastExecution !== null && hoursSinceLastExecution < 48) : true
+      );
+
+      return reply.send({
+        success: true,
+        data: {
+          items,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.max(1, Math.ceil(total / limit)),
+          },
+          metrics: {
+            totalConfiscated,
+            totalZinthosRecovered,
+            totalUsersAffected,
+            lastExecution,
+            hoursSinceLastExecution: hoursSinceLastExecution ? Math.round(hoursSinceLastExecution) : null,
+            isSystemOperational,
+          },
+        },
+      });
+    },
+  });
+
+  /**
    * Deletar usuário e liberar casamentos associados (Painel Admin)
    */
   fastify.delete('/api/admin/users/:userId', {

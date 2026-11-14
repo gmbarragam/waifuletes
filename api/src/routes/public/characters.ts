@@ -106,42 +106,52 @@ export const publicCharacterRoutes: FastifyPluginAsync = async (fastify) => {
     },
   });
 
-  fastify.get('/characters/:id', {
-    schema: {
-      description: 'Obtém detalhes de um personagem específico por ID/slug',
-      tags: ['Personagens (Público)'],
-      params: {
-        type: 'object',
-        required: ['id'],
-        properties: {
-          id: { type: 'string' },
-        },
+  const getCharacterSchema = {
+    description: 'Obtém detalhes de um personagem específico por ID/slug ou numericId',
+    tags: ['Personagens (Público)'],
+    params: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id: { type: 'string' },
       },
     },
-    handler: async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const isTrusted = isTrustedRequest(request);
-      const character = await characterService.getCharacterById(id, isTrusted);
+  };
 
-      if (!character) {
-        return reply.status(404).send({
-          success: false,
-          error: {
-            code: 'CHARACTER_NOT_FOUND',
-            message: 'Personagem não encontrado.',
-          },
-        });
-      }
+  const getCharacterHandler = async (request: any, reply: any) => {
+    const { id } = request.params as { id: string };
+    const isTrusted = isTrustedRequest(request);
+    const character = await characterService.getCharacterById(id, isTrusted);
 
-      if (!isTrusted) {
-        reply.header('Cache-Control', 'public, max-age=30');
-      }
-
-      return reply.send({
-        success: true,
-        data: character,
+    if (!character) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'CHARACTER_NOT_FOUND',
+          message: 'Personagem não encontrado.',
+        },
       });
-    },
+    }
+
+    if (!isTrusted) {
+      reply.header('Cache-Control', 'public, max-age=30');
+    }
+
+    return reply.send({
+      success: true,
+      data: character,
+    });
+  };
+
+  fastify.get('/characters/:id', {
+    schema: getCharacterSchema,
+    handler: getCharacterHandler,
+  });
+
+  // Alias curto para diminuir o tamanho das URLs em rolls e mensagens
+  fastify.get('/c/:id', {
+    schema: getCharacterSchema,
+    handler: getCharacterHandler,
   });
 
   fastify.post('/characters/:id/report', {

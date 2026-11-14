@@ -662,6 +662,7 @@ export class RollService {
         data: {
           character: {
             id: chosen.id,
+            numericId: (chosen as any).numericId ?? null,
             name: chosen.name,
             series: chosen.series,
             description: chosen.description,

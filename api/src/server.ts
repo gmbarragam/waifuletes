@@ -178,6 +178,10 @@ async function buildServer() {
     return sendHtmlNoCache(reply, 'character.html');
   });
 
+  fastify.get('/c/:id', async (req, reply) => {
+    return sendHtmlNoCache(reply, 'character.html');
+  });
+
   fastify.get('/user', async (req, reply) => {
     return sendHtmlNoCache(reply, 'user.html');
   });

@@ -117,6 +117,8 @@ model GroupAdmin {
 
 model Character {
   id          String       @id
+  numericId   Int          @unique @default(autoincrement()) @map("numeric_id")
+  rarityRank  Int?         @map("rarity_rank")
   name        String
   series      String
   description String?
@@ -150,6 +152,7 @@ model Character {
   @@index([claimCount(sort: Desc), likeCount(sort: Desc)])
   @@index([popularityScore(sort: Desc)])
   @@index([waifuRank])
+  @@index([baseRarity, rarityRank])
   @@index([baseRarity, claimCount(sort: Desc)])
   @@index([isMythic])
   @@index([creatorUserId])

@@ -64,6 +64,9 @@
         <button class="retro-tab" data-tab="tab-trades">
           <i class="fas fa-handshake"></i> Negociações
         </button>
+        <button class="retro-tab" data-tab="tab-inactivity">
+          <i class="fas fa-user-clock"></i> Inatividade
+        </button>
       </div>
 
       <!-- Aba 1: Catálogo com Botão Editar -->
@@ -262,6 +265,70 @@
             <button class="btn-retro btn-sm" id="admin-trades-btn-prev" disabled><i class="fas fa-angle-left"></i> Anterior</button>
             <span class="page-indicator" id="admin-trades-page-indicator">1 / 1</span>
             <button class="btn-retro btn-sm" id="admin-trades-btn-next" disabled>Próxima <i class="fas fa-angle-right"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Aba 5: Gestão de Inatividade e Confisco de Waifus -->
+      <div class="tab-content hidden" id="tab-inactivity">
+        <!-- Status Operacional do Sistema -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px;">
+          <div style="background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted); font-weight: 700; margin-bottom: 4px;">Status do Sistema</div>
+            <div id="admin-inactivity-status-badge" style="font-size: 14px; font-weight: 800; color: #22c55e;">
+              <i class="fas fa-check-circle"></i> Operacional
+            </div>
+            <div id="admin-inactivity-last-run" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Última execução: ...</div>
+          </div>
+          <div style="background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted); font-weight: 700; margin-bottom: 4px;">Waifus Confiscadas</div>
+            <div id="admin-inactivity-total-confiscated" style="font-size: 20px; font-weight: 800; color: #ef4444;">0</div>
+          </div>
+          <div style="background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted); font-weight: 700; margin-bottom: 4px;">Zinthos Recuperados</div>
+            <div id="admin-inactivity-total-zinthos" style="font-size: 20px; font-weight: 800; color: #f59e0b;">0</div>
+          </div>
+          <div style="background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted); font-weight: 700; margin-bottom: 4px;">Usuários Afetados</div>
+            <div id="admin-inactivity-total-users" style="font-size: 20px; font-weight: 800; color: #3b82f6;">0</div>
+          </div>
+        </div>
+
+        <div class="search-panel" style="margin-bottom: 20px;">
+          <div class="search-input-group" style="margin-bottom: 0;">
+            <i class="fas fa-search"></i>
+            <input type="text" id="admin-inactivity-search-input" class="retro-input" placeholder="Pesquisar por usuário ou personagem confiscado...">
+          </div>
+        </div>
+
+        <div style="overflow-x: auto; margin-bottom: 20px;">
+          <table class="retro-table" id="admin-inactivity-table">
+            <thead>
+              <tr style="background: #fed7aa;">
+                <th style="min-width: 140px;">Data do Confisco</th>
+                <th style="min-width: 200px;">Usuário Devedor</th>
+                <th style="min-width: 130px;">Última Atividade</th>
+                <th style="min-width: 200px;">Personagem Confiscado</th>
+                <th style="min-width: 100px;">Raridade</th>
+                <th style="min-width: 140px;">Valor Abatido</th>
+                <th style="min-width: 120px;">Dívida Quitada</th>
+              </tr>
+            </thead>
+            <tbody id="admin-inactivity-tbody">
+              <tr>
+                <td colspan="7" style="text-align: center; padding: 24px;">Carregando registros de inatividade...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Paginação de Inatividade -->
+        <div class="pagination-bar">
+          <div class="page-info"><span id="admin-inactivity-total-count">0 registros</span></div>
+          <div class="page-controls">
+            <button class="btn-retro btn-sm" id="admin-inactivity-btn-prev" disabled><i class="fas fa-angle-left"></i> Anterior</button>
+            <span class="page-indicator" id="admin-inactivity-page-indicator">1 / 1</span>
+            <button class="btn-retro btn-sm" id="admin-inactivity-btn-next" disabled>Próxima <i class="fas fa-angle-right"></i></button>
           </div>
         </div>
       </div>

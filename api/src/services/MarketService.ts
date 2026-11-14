@@ -1329,7 +1329,7 @@ export class MarketService {
           });
         }
 
-        // Transfere Zinthos (se houver)
+        // Transfere Zinthos (se houver) com taxa de spread de 5% sobre o vendedor (dinheiro destruído da economia)
         if (offeredZinthos > 0) {
           const debited = await tx.user.updateMany({
             where: { id: offer.buyerId, kakera: { gte: offeredZinthos } },
@@ -1338,24 +1338,40 @@ export class MarketService {
           if (debited.count !== 1) {
             throw new DomainError('INSUFFICIENT_FUNDS', 'O proponente não possui mais os Zinthos ofertados.');
           }
-          await tx.user.update({
-            where: { id: sellerId },
-            data: { kakera: { increment: offeredZinthos } },
-          });
+          const sellerNetZinthos = Math.floor(offeredZinthos * 0.95);
+          const spreadFee = offeredZinthos - sellerNetZinthos;
+
+          if (sellerNetZinthos > 0) {
+            await tx.user.update({
+              where: { id: sellerId },
+              data: { kakera: { increment: sellerNetZinthos } },
+            });
+          }
           await tx.kakeraTransaction.createMany({
             data: [
               {
                 userId: offer.buyerId,
                 amount: -offeredZinthos,
                 reason: KakeraReason.MARKET_TRADE,
-                metadata: { type: 'market_offer_paid', listingId: listing.id, sellerId },
+                metadata: { type: 'market_offer_paid', listingId: listing.id, sellerId, offerId: offer.id },
               },
-              {
-                userId: sellerId,
-                amount: offeredZinthos,
-                reason: KakeraReason.MARKET_TRADE,
-                metadata: { type: 'market_offer_received', listingId: listing.id, buyerId: offer.buyerId },
-              },
+              ...(sellerNetZinthos > 0
+                ? [
+                    {
+                      userId: sellerId,
+                      amount: sellerNetZinthos,
+                      reason: KakeraReason.MARKET_TRADE,
+                      metadata: {
+                        type: 'market_offer_received',
+                        listingId: listing.id,
+                        buyerId: offer.buyerId,
+                        offerId: offer.id,
+                        grossZinthos: offeredZinthos,
+                        spreadFee,
+                      },
+                    },
+                  ]
+                : []),
             ],
           });
         }
@@ -1817,17 +1833,18 @@ export class MarketService {
       }
     }
 
-    // 3. Valida se o Vendedor possui saldo suficiente de Zinthos para devolução
+    // 3. Valida se o Vendedor possui saldo suficiente de Zinthos para devolução (descontando o spread original)
     const offeredZinthos = Number(offered.zinthos) || 0;
-    if (offeredZinthos > 0) {
+    const sellerDeductZinthos = offeredZinthos > 0 ? Math.floor(offeredZinthos * 0.95) : 0;
+    if (sellerDeductZinthos > 0) {
       const seller = await this.prisma.user.findUnique({
         where: { id: offer.sellerId },
         select: { kakera: true },
       });
-      if (!seller || seller.kakera < offeredZinthos) {
+      if (!seller || seller.kakera < sellerDeductZinthos) {
         throw new DomainError(
           'INSUFFICIENT_FUNDS',
-          `Não é possível reverter: o vendedor (${offer.seller.name}) possui apenas ${seller?.kakera || 0} Zinthos, mas precisa devolver ${offeredZinthos} Zinthos.`
+          `Não é possível reverter: o vendedor (${offer.seller.name}) possui apenas ${seller?.kakera || 0} Zinthos, mas precisa devolver ${sellerDeductZinthos} Zinthos (valor líquido recebido na negociação).`
         );
       }
     }
@@ -1901,24 +1918,30 @@ export class MarketService {
         });
       }
 
-      // Estorna Zinthos
+      // Estorna Zinthos (comprador recebe o valor integral ofertado; vendedor devolve o líquido que recebeu)
       if (offeredZinthos > 0) {
-        await tx.user.update({
-          where: { id: offer.sellerId },
-          data: { kakera: { decrement: offeredZinthos } },
-        });
+        if (sellerDeductZinthos > 0) {
+          await tx.user.update({
+            where: { id: offer.sellerId },
+            data: { kakera: { decrement: sellerDeductZinthos } },
+          });
+        }
         await tx.user.update({
           where: { id: offer.buyerId },
           data: { kakera: { increment: offeredZinthos } },
         });
         await tx.kakeraTransaction.createMany({
           data: [
-            {
-              userId: offer.sellerId,
-              amount: -offeredZinthos,
-              reason: KakeraReason.MARKET_TRADE,
-              metadata: { type: 'market_offer_reverted_admin', listingId: listing.id, offerId: offer.id, buyerId: offer.buyerId },
-            },
+            ...(sellerDeductZinthos > 0
+              ? [
+                  {
+                    userId: offer.sellerId,
+                    amount: -sellerDeductZinthos,
+                    reason: KakeraReason.MARKET_TRADE,
+                    metadata: { type: 'market_offer_reverted_admin', listingId: listing.id, offerId: offer.id, buyerId: offer.buyerId },
+                  },
+                ]
+              : []),
             {
               userId: offer.buyerId,
               amount: offeredZinthos,
