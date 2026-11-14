@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
 import { calculateDivorceRefund, getDailyDivorceRate, calculateRankMultiplier } from '../utils/rarityCalculator.js';
 import { config } from '../config.js';
-import { withBusinessSpan, userIdAttr, addEvent, setAttrs } from '../telemetry.js';
+import { withBusinessSpan, withSpan, userIdAttr, addEvent, setAttrs } from '../telemetry.js';
 import { MarketInvestmentService, BASE_MONEY_SUPPLY, INFLATION_ALPHA } from './MarketInvestmentService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
 
@@ -285,7 +285,7 @@ export class DivorceService {
 
     // Posição no rank da raridade e multiplicador correspondente (1x a 7x)
     const { position: rarityPosition, total: rarityTotal, multiplier: rankMultiplier } =
-      await this.getCharacterRarityRankAndTotal(character);
+      await withSpan('divorce rank.lookup', {}, () => this.getCharacterRarityRankAndTotal(character));
 
     // Soft Limite diário por raridade
     const previousDailyDivorces = await this.getDailyDivorceCount(userId, character.baseRarity);
@@ -379,7 +379,7 @@ export class DivorceService {
 
     // Posição no rank da raridade e multiplicador correspondente (1x a 7x)
     const { position: rarityPosition, total: rarityTotal, multiplier: rankMultiplier } =
-      await this.getCharacterRarityRankAndTotal(character);
+      await withSpan('divorce rank.lookup', {}, () => this.getCharacterRarityRankAndTotal(character));
 
     // 3. Consultar Soft Limite diário por raridade
     const previousDailyDivorces = await this.getDailyDivorceCount(userId, character.baseRarity);
@@ -399,6 +399,9 @@ export class DivorceService {
       'waifu.divorce.soulmate': isSoulmate,
       'waifu.divorce.daily_number': currentDivorceNumber,
       'waifu.divorce.soft_limit_applied': refundRate < 1.0,
+      'waifu.divorce.rank_multiplier': rankMultiplier,
+      'waifu.divorce.rarity_position': rarityPosition,
+      'waifu.divorce.rarity_total': rarityTotal,
     });
 
     // 5. Executar transação atômica

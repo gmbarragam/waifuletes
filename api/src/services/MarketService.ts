@@ -1340,6 +1340,7 @@ export class MarketService {
           }
           const sellerNetZinthos = Math.floor(offeredZinthos * 0.95);
           const spreadFee = offeredZinthos - sellerNetZinthos;
+          setAttrs({ 'waifu.market.zinthos': offeredZinthos, 'waifu.market.spread_fee': spreadFee });
 
           if (sellerNetZinthos > 0) {
             await tx.user.update({
