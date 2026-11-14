@@ -44,6 +44,14 @@ const tradesState = {
   totalPages: 1
 };
 
+const inactivityState = {
+  search: '',
+  page: 1,
+  limit: 20,
+  total: 0,
+  totalPages: 1
+};
+
 let selectedMarryTargetUser = null;
 let suggestionFilterStatus = 'PENDING';
 let suggestionFilterType = 'all';
@@ -103,6 +111,8 @@ function setupAdminEvents() {
         loadAdminUsers();
       } else if (targetId === 'tab-trades') {
         loadAdminTrades();
+      } else if (targetId === 'tab-inactivity') {
+        loadAdminInactivity();
       }
     });
   });
@@ -307,6 +317,41 @@ function setupAdminEvents() {
       if (tradesState.page < tradesState.totalPages) {
         tradesState.page++;
         loadAdminTrades();
+      }
+    });
+  }
+
+  // Busca de inatividade
+  let inactivitySearchTimer = null;
+  const adminInactivitySearchInput = document.getElementById('admin-inactivity-search-input');
+  if (adminInactivitySearchInput) {
+    adminInactivitySearchInput.addEventListener('input', () => {
+      clearTimeout(inactivitySearchTimer);
+      inactivitySearchTimer = setTimeout(() => {
+        inactivityState.search = adminInactivitySearchInput.value.trim();
+        inactivityState.page = 1;
+        loadAdminInactivity();
+      }, 300);
+    });
+  }
+
+  // Paginação de inatividade
+  const inactivityBtnPrev = document.getElementById('admin-inactivity-btn-prev');
+  if (inactivityBtnPrev) {
+    inactivityBtnPrev.addEventListener('click', () => {
+      if (inactivityState.page > 1) {
+        inactivityState.page--;
+        loadAdminInactivity();
+      }
+    });
+  }
+
+  const inactivityBtnNext = document.getElementById('admin-inactivity-btn-next');
+  if (inactivityBtnNext) {
+    inactivityBtnNext.addEventListener('click', () => {
+      if (inactivityState.page < inactivityState.totalPages) {
+        inactivityState.page++;
+        loadAdminInactivity();
       }
     });
   }
@@ -2163,6 +2208,127 @@ async function adminRevertTrade(offerId, charName, sellerName, buyerName) {
     Api.showToast('Erro de comunicação ao reverter negociação.', '❌');
   } finally {
     Api.hideLoading();
+  }
+}
+
+// ========================================================
+// GESTÃO DE INATIVIDADE (CONFISCO DE WAIFUS)
+// ========================================================
+async function loadAdminInactivity() {
+  const tbody = document.getElementById('admin-inactivity-tbody');
+  const totalCountEl = document.getElementById('admin-inactivity-total-count');
+  const pageIndicatorEl = document.getElementById('admin-inactivity-page-indicator');
+  const btnPrev = document.getElementById('admin-inactivity-btn-prev');
+  const btnNext = document.getElementById('admin-inactivity-btn-next');
+
+  // Elementos de Métricas / Status Operacional
+  const badgeStatus = document.getElementById('admin-inactivity-status-badge');
+  const lastRunEl = document.getElementById('admin-inactivity-last-run');
+  const totalConfiscatedEl = document.getElementById('admin-inactivity-total-confiscated');
+  const totalZinthosEl = document.getElementById('admin-inactivity-total-zinthos');
+  const totalUsersEl = document.getElementById('admin-inactivity-total-users');
+
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 24px;"><i class="fas fa-spinner fa-spin"></i> Carregando registros de inatividade e confiscos...</td></tr>';
+
+  try {
+    const params = new URLSearchParams({
+      page: inactivityState.page,
+      limit: inactivityState.limit,
+    });
+    if (inactivityState.search) params.append('search', inactivityState.search);
+
+    const res = await Api.get(`/api/admin/inactivity?${params.toString()}`, {
+      Authorization: `Bearer ${adminToken}`,
+    });
+
+    if (!res.success) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 24px; color: red;">${escapeHtml(res.error?.message || 'Erro ao carregar registros de inatividade.')}</td></tr>`;
+      return;
+    }
+
+    const { items, pagination, metrics } = res.data;
+    inactivityState.total = pagination.total;
+    inactivityState.totalPages = pagination.totalPages;
+
+    if (totalCountEl) totalCountEl.textContent = `${inactivityState.total.toLocaleString('pt-BR')} registros`;
+    if (pageIndicatorEl) pageIndicatorEl.textContent = `${inactivityState.page} / ${inactivityState.totalPages}`;
+    if (btnPrev) btnPrev.disabled = inactivityState.page <= 1;
+    if (btnNext) btnNext.disabled = inactivityState.page >= inactivityState.totalPages;
+
+    // Atualiza Métricas e Status Operacional
+    if (metrics) {
+      if (totalConfiscatedEl) totalConfiscatedEl.textContent = Number(metrics.totalConfiscated || 0).toLocaleString('pt-BR');
+      if (totalZinthosEl) totalZinthosEl.textContent = Number(metrics.totalZinthosRecovered || 0).toLocaleString('pt-BR');
+      if (totalUsersEl) totalUsersEl.textContent = Number(metrics.totalUsersAffected || 0).toLocaleString('pt-BR');
+
+      if (lastRunEl) {
+        lastRunEl.textContent = metrics.lastExecution
+          ? `Último confisco: ${new Date(metrics.lastExecution).toLocaleString('pt-BR')} (${metrics.hoursSinceLastExecution ?? 0}h atrás)`
+          : 'Nenhum confisco registrado até o momento.';
+      }
+
+      if (badgeStatus) {
+        if (metrics.isSystemOperational) {
+          badgeStatus.innerHTML = '<i class="fas fa-check-circle" style="color: #22c55e;"></i> Operacional (Cobrança Ativa)';
+          badgeStatus.style.color = '#22c55e';
+        } else {
+          badgeStatus.innerHTML = '<i class="fas fa-exclamation-triangle" style="color: #f59e0b;"></i> Aguardando Próximo Ciclo';
+          badgeStatus.style.color = '#f59e0b';
+        }
+      }
+    }
+
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 24px;">Nenhum registro de confisco encontrado. O sistema realiza as cobranças e confiscos automaticamente às 04:00 BRT.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = '';
+    items.forEach((item) => {
+      const tr = document.createElement('tr');
+      const dateStr = new Date(item.createdAt).toLocaleString('pt-BR');
+      const lastActiveStr = item.user?.lastActiveAt
+        ? new Date(item.user.lastActiveAt).toLocaleString('pt-BR')
+        : '<span style="color: var(--text-muted);">Não registrada</span>';
+
+      const cleanUserNumber = (item.user?.id || '').replace('@s.whatsapp.net', '').replace('@c.us', '');
+      const userPlatformBadge = item.user?.platform === 'WHATSAPP'
+        ? '<span style="color: #16a34a; font-size: 11px;"><i class="fab fa-whatsapp"></i> WhatsApp</span>'
+        : `<small style="font-size: 11px;">${escapeHtml(item.user?.platform || '')}</small>`;
+
+      const rarityColor = (RARITY_COLORS && RARITY_COLORS[item.character.rarity]) || '#94a3b8';
+      const rarityLabel = (RARITY_CONFIG && RARITY_CONFIG[item.character.rarity]?.label) || item.character.rarity;
+
+      tr.innerHTML = `
+        <td style="font-size: 12px; font-weight: 700;">${escapeHtml(dateStr)}</td>
+        <td>
+          <div style="font-weight: 800; font-size: 13px;">${escapeHtml(item.user?.name || item.user?.id || 'Desconhecido')}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">${userPlatformBadge} <code>${escapeHtml(cleanUserNumber || item.user?.id || '')}</code></div>
+        </td>
+        <td style="font-size: 12px;">${lastActiveStr}</td>
+        <td>
+          <div style="font-weight: 800; font-size: 13px; color: #f59e0b;">${escapeHtml(item.character.name)}</div>
+          <div style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${escapeHtml(item.character.id)}</div>
+        </td>
+        <td>
+          <span class="badge-tag" style="background: ${rarityColor}; color: #000; font-weight: 800; font-size: 11px;">
+            ${escapeHtml(rarityLabel)}
+          </span>
+        </td>
+        <td style="font-weight: 800; font-size: 13px; color: #10b981;">
+          +${Number(item.recoveredValue || 0).toLocaleString('pt-BR')} Zinthos
+        </td>
+        <td style="font-size: 12px;">
+          ${item.debtBefore !== null && item.debtAfter !== null
+            ? `<span title="Dívida antes: ${item.debtBefore}z | Restante: ${item.debtAfter}z">De ${item.debtBefore}z → ${item.debtAfter}z</span>`
+            : '<span style="color: #22c55e;">Quitado</span>'}
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr style="color: red;"><td colspan="7" style="text-align: center; padding: 24px;">Falha de comunicação ao carregar registros de inatividade.</td></tr>';
   }
 }
 
