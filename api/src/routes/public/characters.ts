@@ -148,12 +148,6 @@ export const publicCharacterRoutes: FastifyPluginAsync = async (fastify) => {
     handler: getCharacterHandler,
   });
 
-  // Alias curto para diminuir o tamanho das URLs em rolls e mensagens
-  fastify.get('/c/:id', {
-    schema: getCharacterSchema,
-    handler: getCharacterHandler,
-  });
-
   fastify.post('/characters/:id/report', {
     schema: {
       description: 'Reporta/denuncia um personagem para moderação e eventual exclusão',

@@ -152,11 +152,11 @@ export class MarketService {
     // Registra notificações para quem possui na Wishlist ou cobiçou este personagem
     try {
       const interestedUsers = await this.prisma.$queryRaw<{ userId: string }[]>`
-        SELECT DISTINCT "user_id" as "userId" FROM (
-          SELECT "user_id" FROM "wishlist_entries" WHERE "character_id" = ${characterId}
+        SELECT DISTINCT "userId" FROM (
+          SELECT "userId" FROM "wishlist_entries" WHERE "characterId" = ${characterId}
           UNION
-          SELECT "user_id" FROM "character_covets" WHERE "character_id" = ${characterId}
-        ) t WHERE "user_id" != ${userId}
+          SELECT "user_id" AS "userId" FROM "character_covets" WHERE "character_id" = ${characterId}
+        ) t WHERE "userId" != ${userId}
       `;
 
       if (interestedUsers.length > 0) {

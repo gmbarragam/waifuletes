@@ -1104,6 +1104,16 @@ function setupEventListeners() {
   // Botão de submeter proposta de oferta
   document.getElementById('btn-submit-offer')?.addEventListener('click', submitMarketOffer);
 
+  // Input de Zinthos no modal de oferta
+  const offerZinthosInput = document.getElementById('offer-zinthos-input');
+  if (offerZinthosInput) {
+    offerZinthosInput.addEventListener('input', () => {
+      if (typeof updateOfferZinthosSpreadNote === 'function') {
+        updateOfferZinthosSpreadNote();
+      }
+    });
+  }
+
   // Busca de waifus no modal de oferta
   const offerWaifusSearchInput = document.getElementById('offer-waifus-search-input');
   if (offerWaifusSearchInput) {
@@ -6123,6 +6133,14 @@ function addOfferPetalitas(qty) {
   }
 }
 
+window.updateOfferRunasQuote = updateOfferRunasQuote;
+window.setOfferRunasMax = setOfferRunasMax;
+window.setOfferRunasZero = setOfferRunasZero;
+window.addOfferRunas = addOfferRunas;
+window.setOfferPetalitasMax = setOfferPetalitasMax;
+window.setOfferPetalitasZero = setOfferPetalitasZero;
+window.addOfferPetalitas = addOfferPetalitas;
+
 function openOfferModalById(listingId) {
   const listing = marketListingsMap.get(listingId);
   if (!listing) {
@@ -6158,7 +6176,9 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
 
   const zInput = document.getElementById('offer-zinthos-input');
   if (zInput) zInput.value = '0';
-  updateOfferZinthosSpreadNote();
+  if (typeof updateOfferZinthosSpreadNote === 'function') {
+    updateOfferZinthosSpreadNote();
+  }
   const balanceEl = document.getElementById('offer-user-zinthos-balance');
   if (balanceEl) {
     balanceEl.textContent = Number(buyerData?.kakera || 0).toLocaleString('pt-BR');
@@ -6736,6 +6756,12 @@ async function executeCancelSentOffer(offerId) {
 window.promptCancelSentOffer = promptCancelSentOffer;
 
 // Funções de controle de Zinthos no modal de oferta
+function getActiveBuyerKakera() {
+  const auth = typeof getActiveAuthUser === 'function' ? getActiveAuthUser() : { isOwner: true };
+  const buyerData = auth.isOwner ? userSessionData : (visitorSessionData || userSessionData);
+  return Number(buyerData?.kakera || 0);
+}
+
 function updateOfferZinthosSpreadNote() {
   const input = document.getElementById('offer-zinthos-input');
   const note = document.getElementById('offer-zinthos-spread-note');
@@ -6748,26 +6774,29 @@ function updateOfferZinthosSpreadNote() {
 window.updateOfferZinthosSpreadNote = updateOfferZinthosSpreadNote;
 
 function setOfferZinthosMax() {
-  const max = Number(userSessionData?.kakera || 0);
+  const max = getActiveBuyerKakera();
   const input = document.getElementById('offer-zinthos-input');
   if (input) input.value = max;
   updateOfferZinthosSpreadNote();
 }
+window.setOfferZinthosMax = setOfferZinthosMax;
 
 function setOfferZinthosZero() {
   const input = document.getElementById('offer-zinthos-input');
   if (input) input.value = '0';
   updateOfferZinthosSpreadNote();
 }
+window.setOfferZinthosZero = setOfferZinthosZero;
 
 function addOfferZinthos(amount) {
   const input = document.getElementById('offer-zinthos-input');
   if (!input) return;
   const current = parseInt(input.value, 10) || 0;
-  const max = Number(userSessionData?.kakera || 0);
+  const max = getActiveBuyerKakera();
   input.value = Math.min(max, current + amount);
   updateOfferZinthosSpreadNote();
 }
+window.addOfferZinthos = addOfferZinthos;
 
 // Cobiçar personagem casado
 async function covetCharacter(characterId, btn, event) {

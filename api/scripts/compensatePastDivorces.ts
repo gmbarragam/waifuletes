@@ -8,7 +8,22 @@
  */
 
 import { PrismaClient, Rarity } from '@prisma/client';
-import { calculateRankMultiplier } from '../src/utils/rarityCalculator.js';
+
+/**
+ * Curva exponencial cúbica (Opção B):
+ * - Topo absoluto (Top 1): 7.0x
+ * - Top 10%: ~5.4x
+ * - Top 25%: ~3.5x
+ * - Mediana (Top 50%): ~1.75x
+ * - Base: 1.0x
+ */
+export function calculateRankMultiplier(position: number, total: number): number {
+  if (!total || total <= 1 || !position || position <= 1) return 7.0;
+  if (position >= total) return 1.0;
+  const ratio = Math.max(0, 1.0 - (position - 1) / total);
+  const mult = Math.max(1.0, 1.0 + 6.0 * Math.pow(ratio, 3));
+  return Number(mult.toFixed(4));
+}
 
 const prisma = new PrismaClient();
 
