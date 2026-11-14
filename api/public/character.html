@@ -240,6 +240,34 @@
         <button type="button" class="btn-retro btn-sm" onclick="CharacterPage.copyShareLink()">
           <i class="fas fa-share-alt"></i> Compartilhar Link
         </button>
+        <button type="button" class="btn-retro btn-sm btn-danger" id="btn-char-report" onclick="CharacterPage.openReportModal()" style="font-weight: 800;" title="Denunciar este personagem para a moderação">
+          <i class="fas fa-flag"></i> Denunciar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Denúncia -->
+  <div class="modal-overlay hidden" id="modal-report-character" style="position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+    <div class="modal-box" style="background: var(--bg-card, #1e162e); border: var(--border-retro, 2px solid #000); box-shadow: var(--shadow-retro, 4px 4px 0 #000); border-radius: var(--radius-retro, 8px); padding: 16px; width: 90%; max-width: 440px;">
+      <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
+        <span class="modal-title" style="font-weight: 800; font-size: 15px; color: #ef4444;"><i class="fas fa-flag"></i> Denunciar Personagem</span>
+        <button type="button" class="btn-retro btn-sm" onclick="CharacterPage.closeReportModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; margin: 0 0 10px 0;">
+          Você está denunciando o personagem <strong id="report-char-name" style="color: #f59e0b;">...</strong> para moderação.
+        </p>
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px;">Motivo da denúncia:</label>
+          <textarea id="report-reason-input" class="retro-input" rows="3" placeholder="Ex: Imagem ofensiva, personagem duplicado ou dados incorretos..." style="width: 100%; box-sizing: border-box; resize: vertical;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 8px;">
+        <button type="button" class="btn-retro btn-sm" onclick="CharacterPage.closeReportModal()">Cancelar</button>
+        <button type="button" class="btn-retro btn-sm btn-danger" id="btn-submit-report" onclick="CharacterPage.submitReport()" style="font-weight: 800;">
+          <i class="fas fa-paper-plane"></i> Enviar Denúncia
+        </button>
       </div>
     </div>
   </div>

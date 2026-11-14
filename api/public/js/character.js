@@ -478,8 +478,9 @@ const CharacterPage = {
   },
 
   copyShareLink() {
-    const url = window.location.origin + `/character/${encodeURIComponent(this.charId)}`;
-    Api.copyToClipboard(url, 'Link do personagem copiado!').then((copied) => {
+    const shortId = this.charData?.numericId || this.charId;
+    const url = window.location.origin + `/c/${encodeURIComponent(shortId)}`;
+    Api.copyToClipboard(url, 'Link curto copiado!').then((copied) => {
       if (!copied) {
         Api.showPrompt({
           icon: '🔗',
@@ -493,6 +494,65 @@ const CharacterPage = {
         });
       }
     });
+  },
+
+  openReportModal() {
+    const modal = document.getElementById('modal-report-character');
+    if (!modal) return;
+    const charNameEl = document.getElementById('report-char-name');
+    if (charNameEl) {
+      charNameEl.textContent = this.charData?.name || this.charId;
+    }
+    const input = document.getElementById('report-reason-input');
+    if (input) input.value = '';
+    modal.classList.remove('hidden');
+    if (input) input.focus();
+  },
+
+  closeReportModal() {
+    const modal = document.getElementById('modal-report-character');
+    if (modal) modal.classList.add('hidden');
+  },
+
+  async submitReport() {
+    const btn = document.getElementById('btn-submit-report');
+    const input = document.getElementById('report-reason-input');
+    const reason = input ? input.value.trim() : '';
+
+    if (!reason) {
+      Api.showToast('Por favor, descreva o motivo da denúncia.', '⚠️');
+      if (input) input.focus();
+      return;
+    }
+
+    if (btn) btn.disabled = true;
+
+    try {
+      const targetId = this.charData?.id || this.charId;
+      const res = await Api.post(`/characters/${encodeURIComponent(targetId)}/report`, {
+        characterId: targetId,
+        reason,
+        userId: this.userSessionData?.id || undefined,
+        userName: this.userSessionData?.name || undefined,
+      });
+
+      if (res?.success) {
+        this.closeReportModal();
+        Api.showToast(res.data?.message || 'Denúncia enviada com sucesso! A moderação irá avaliar.', '🛡️');
+        const reportBtn = document.getElementById('btn-char-report');
+        if (reportBtn) {
+          reportBtn.disabled = true;
+          reportBtn.innerHTML = '<i class="fas fa-check"></i> Denunciado';
+          reportBtn.style.opacity = '0.6';
+        }
+      } else {
+        Api.showToast(res.error?.message || 'Erro ao enviar denúncia.', '❌');
+      }
+    } catch (_) {
+      Api.showToast('Erro de comunicação ao enviar denúncia.', '❌');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 };
 

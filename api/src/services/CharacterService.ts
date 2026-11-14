@@ -79,6 +79,17 @@ export class CharacterService {
     const trimmed = identifier.trim();
     const slug = slugify(trimmed);
 
+    // 0. Prioridade máxima quando numérico: busca por ID numérico único
+    if (/^\d+$/.test(trimmed)) {
+      const numId = parseInt(trimmed, 10);
+      if (numId > 0) {
+        const charByNum = await this.prisma.character.findUnique({
+          where: { numericId: numId },
+        });
+        if (charByNum) return charByNum;
+      }
+    }
+
     // 1. Prioridade máxima: busca por ID exato
     let character = await this.prisma.character.findUnique({
       where: { id: trimmed },
@@ -484,11 +495,25 @@ export class CharacterService {
       },
     };
 
-    // 1. Prioridade máxima: busca por ID exato
-    let character = await this.prisma.character.findUnique({
-      where: { id: trimmed },
-      include: includeOptions,
-    });
+    // 0. Prioridade máxima quando numérico: busca por ID numérico único
+    let character = null;
+    if (/^\d+$/.test(trimmed)) {
+      const numId = parseInt(trimmed, 10);
+      if (numId > 0) {
+        character = await this.prisma.character.findUnique({
+          where: { numericId: numId },
+          include: includeOptions,
+        });
+      }
+    }
+
+    // 1. Busca por ID exato (string)
+    if (!character) {
+      character = await this.prisma.character.findUnique({
+        where: { id: trimmed },
+        include: includeOptions,
+      });
+    }
 
     // 2. Busca por slug exato (quando diferente do ID informado)
     if (!character && slug && slug !== trimmed) {
