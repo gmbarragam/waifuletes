@@ -1,7 +1,7 @@
 import { PrismaClient, Prisma, Rarity, ListingStatus } from '@prisma/client';
 import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
-import { calculateDivorceRefund, getDailyDivorceRate } from '../utils/rarityCalculator.js';
+import { calculateDivorceRefund, getDailyDivorceRate, calculateRankMultiplier } from '../utils/rarityCalculator.js';
 import { config } from '../config.js';
 import { MarketInvestmentService, BASE_MONEY_SUPPLY, INFLATION_ALPHA } from './MarketInvestmentService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
@@ -172,6 +172,79 @@ export class DivorceService {
   }
 
   /**
+   * Obtém a posição (rank) do personagem dentro de sua categoria (raridade) e o total de personagens da raridade
+   */
+  async getCharacterRarityRankAndTotal(
+    character: { id: string; baseRarity: Rarity; rarityRank?: number | null; rank?: number | null; popularityScore?: number | null; claimCount?: number | null }
+  ): Promise<{ position: number; total: number; multiplier: number }> {
+    const rarity = character.baseRarity;
+
+    // Total de personagens na raridade (com cache em Redis se disponível)
+    let total = 0;
+    const totalKey = `rarity:total:${rarity}`;
+    if (this.redis) {
+      const cachedTotal = await this.redis.get(totalKey).catch(() => null);
+      if (cachedTotal) total = parseInt(cachedTotal, 10);
+    }
+    if (!total) {
+      if (typeof this.prisma?.character?.count === 'function') {
+        try {
+          total = await this.prisma.character.count({ where: { baseRarity: rarity, isActive: true } });
+        } catch {
+          total = 1000;
+        }
+      } else {
+        total = 1000;
+      }
+      if (this.redis && total > 0) {
+        await this.redis.set(totalKey, String(total), 'EX', 3600).catch(() => {});
+      }
+    }
+    if (total <= 0) total = 1000;
+
+    // Posição do personagem na raridade
+    let position = character.rarityRank ?? null;
+    if (!position) {
+      try {
+        if (typeof this.prisma?.$queryRaw !== 'function') {
+          throw new Error('No queryRaw');
+        }
+        const countResult = await this.prisma.$queryRaw<{ count: bigint }[]>`
+          SELECT COUNT(*) as count
+          FROM characters
+          WHERE "baseRarity" = ${rarity}::"Rarity"
+            AND "isActive" = true
+            AND (
+              (rank IS NOT NULL AND ${character.rank ?? null} IS NOT NULL AND rank < ${character.rank})
+              OR (${character.rank ?? null} IS NULL AND rank IS NOT NULL)
+              OR (
+                (rank = ${character.rank ?? null} OR (rank IS NULL AND ${character.rank ?? null} IS NULL))
+                AND "popularityScore" > ${character.popularityScore ?? 0}
+              )
+              OR (
+                (rank = ${character.rank ?? null} OR (rank IS NULL AND ${character.rank ?? null} IS NULL))
+                AND "popularityScore" = ${character.popularityScore ?? 0}
+                AND "claimCount" > ${character.claimCount ?? 0}
+              )
+              OR (
+                (rank = ${character.rank ?? null} OR (rank IS NULL AND ${character.rank ?? null} IS NULL))
+                AND "popularityScore" = ${character.popularityScore ?? 0}
+                AND "claimCount" = ${character.claimCount ?? 0}
+                AND id < ${character.id}
+              )
+            )
+        `;
+        position = Number(countResult[0]?.count || 0) + 1;
+      } catch {
+        position = Math.max(1, Math.round(total / 2));
+      }
+    }
+
+    const multiplier = calculateRankMultiplier(position, total);
+    return { position, total, multiplier };
+  }
+
+  /**
    * Consulta a estimativa de reembolso de divórcio antes da confirmação
    */
   async previewDivorce(userId: string, characterId: string) {
@@ -209,6 +282,10 @@ export class DivorceService {
     const isSoulmate = keys >= (config.SOULMATE_KEYS_REQUIRED ?? 10) || Boolean(soulmateRecord);
     const inflationMultiplier = await this.getInflationMultiplier();
 
+    // Posição no rank da raridade e multiplicador correspondente (1x a 7x)
+    const { position: rarityPosition, total: rarityTotal, multiplier: rankMultiplier } =
+      await this.getCharacterRarityRankAndTotal(character);
+
     // Soft Limite diário por raridade
     const previousDailyDivorces = await this.getDailyDivorceCount(userId, character.baseRarity);
     const projectedDivorceNumber = previousDailyDivorces + 1;
@@ -219,6 +296,7 @@ export class DivorceService {
       isSoulmate,
       inflationMultiplier,
       dailyDivorceRate: refundRate,
+      rankMultiplier,
     });
 
     const cycle = this.getDailyCycleInfo();
@@ -233,6 +311,9 @@ export class DivorceService {
       currentKeys: keys,
       isSoulmate,
       inflationMultiplier,
+      rankMultiplier,
+      rarityPosition,
+      rarityTotal,
       dailyDivorceCount: previousDailyDivorces,
       divorceTier: projectedDivorceNumber,
       refundRate,
@@ -291,6 +372,10 @@ export class DivorceService {
     const isSoulmate = keys >= (config.SOULMATE_KEYS_REQUIRED ?? 10) || Boolean(soulmateRecord);
     const inflationMultiplier = await this.getInflationMultiplier();
 
+    // Posição no rank da raridade e multiplicador correspondente (1x a 7x)
+    const { position: rarityPosition, total: rarityTotal, multiplier: rankMultiplier } =
+      await this.getCharacterRarityRankAndTotal(character);
+
     // 3. Consultar Soft Limite diário por raridade
     const previousDailyDivorces = await this.getDailyDivorceCount(userId, character.baseRarity);
     const currentDivorceNumber = previousDailyDivorces + 1;
@@ -302,6 +387,7 @@ export class DivorceService {
       isSoulmate,
       inflationMultiplier,
       dailyDivorceRate: refundRate,
+      rankMultiplier,
     });
 
     // 5. Executar transação atômica
@@ -357,6 +443,9 @@ export class DivorceService {
             rawValue: refund.rawValue,
             rawBeforeInflation: refund.rawBeforeInflation,
             inflationMultiplier,
+            rankMultiplier,
+            rarityPosition,
+            rarityTotal,
             penaltyRate: '5%',
             isSoulmate,
             dailyDivorceNumber: currentDivorceNumber,
@@ -388,6 +477,9 @@ export class DivorceService {
         cancelledListings,
         isSoulmate,
         inflationMultiplier,
+        rankMultiplier,
+        rarityPosition,
+        rarityTotal,
         dailyDivorceCount: currentDivorceNumber,
         refundRate,
         refundRatePercent: `${Math.round(refundRate * 100)}%`,
