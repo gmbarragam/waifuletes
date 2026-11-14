@@ -3,6 +3,7 @@ import { CooldownService } from './CooldownService.js';
 import { CharacterService } from './CharacterService.js';
 import { UserService } from './UserService.js';
 import { config } from '../config.js';
+import { withBusinessSpan, hashId, addEvent, setAttrs } from '../telemetry.js';
 
 export interface MarryParams {
   userId: string;
@@ -20,6 +21,14 @@ export class MarryService {
   ) {}
 
   async marry(params: MarryParams) {
+    return withBusinessSpan(
+      'marry',
+      { 'waifu.user.id_hash': hashId(params.userId), 'waifu.group.id_hash': hashId(params.groupId) },
+      () => this.marryImpl(params)
+    );
+  }
+
+  private async marryImpl(params: MarryParams) {
     const { userId, groupId, characterId } = params;
 
     // 1. Localizar personagem de forma flexível (ID, slug ou nome)
@@ -88,6 +97,7 @@ export class MarryService {
 
     // 4. Validação de Limite Diário de Casamento por Raridade
     const rarity = character.baseRarity || Rarity.COMMON;
+    setAttrs({ 'waifu.character.rarity': rarity });
     const dailyCheck = await this.cooldownService.canMarryDaily(userId, rarity, false);
     if (!dailyCheck.allowed) {
       return {
@@ -106,6 +116,8 @@ export class MarryService {
     // 5. Reserva atômica de cooldown de claim para a raridade deste personagem via SET ... NX
     const cooldownSecs = this.cooldownService.getClaimCooldownSecondsForRarity(rarity);
     const acquiredClaim = await this.cooldownService.acquireClaimLock(userId, rarity, cooldownSecs);
+    setAttrs({ 'waifu.claim.lock_acquired': acquiredClaim });
+    if (acquiredClaim) addEvent('claim.lock_acquired');
     if (!acquiredClaim) {
       const cooldown = await this.cooldownService.getClaimCooldown(userId, rarity);
       const hours = Math.floor(cooldown.remainingSeconds / 3600);
@@ -206,11 +218,15 @@ export class MarryService {
       });
     } catch (error) {
       await rollbackClaimCooldown();
+      addEvent('cooldown.rollback');
       if (
         error instanceof CharacterAlreadyClaimedError ||
         (error instanceof Prisma.PrismaClientKnownRequestError &&
           (error.code === 'P2002' || error.code === 'P2034'))
       ) {
+        addEvent('claim.conflict', {
+          'waifu.claim.conflict_code': error instanceof Prisma.PrismaClientKnownRequestError ? error.code : 'already_claimed',
+        });
         // Busca o dono atualizado
         const currentOwnerEntry = await this.prisma.haremEntry.findFirst({
           where: { characterId: targetCharId },
@@ -230,6 +246,7 @@ export class MarryService {
     }
 
     const { entry: haremEntry, character: claimedCharacter } = transactionResult;
+    addEvent('tx.commit');
 
     // 6. Liberar lock do grupo
     await this.cooldownService.releaseClaimLock(groupId, targetCharId);

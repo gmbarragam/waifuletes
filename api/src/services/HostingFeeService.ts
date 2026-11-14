@@ -4,6 +4,12 @@ import { config, activeHostingRates, inactiveHostingRates } from '../config.js';
 import { calculateDivorceRefund } from '../utils/rarityCalculator.js';
 import { NotificationService } from './NotificationService.js';
 import { DivorceService } from './DivorceService.js';
+import { withBusinessSpan, setAttrs } from '../telemetry.js';
+
+/** Erro esperado (execução duplicada): `code`/`statusCode` só classificam o span como rejected. */
+function runRejected(message: string, code: string): Error {
+  return Object.assign(new Error(message), { code, statusCode: 409 });
+}
 
 export interface DailyFeeSummary {
   date: string;
@@ -73,6 +79,24 @@ export class HostingFeeService {
    * - Personagens Míticos não pagam taxa nem são confiscados (assim como não podem ser divorciados).
    */
   async runDailyFee(options: { dryRun?: boolean; force?: boolean } = {}): Promise<DailyFeeSummary> {
+    return withBusinessSpan(
+      'hosting_fee run',
+      { 'waifu.hosting.dry_run': Boolean(options.dryRun), 'waifu.hosting.force': Boolean(options.force) },
+      async () => {
+        const summary = await this.runDailyFeeImpl(options);
+        setAttrs({
+          'waifu.hosting.users_evaluated': summary.totalUsersEvaluated,
+          'waifu.hosting.users_charged': summary.activeUsersCharged + summary.inactiveUsersCharged,
+          'waifu.hosting.already_charged': summary.alreadyChargedToday,
+          'waifu.hosting.failed_users': summary.failedUsers,
+          'waifu.hosting.waifus_confiscated': summary.totalWaifusConfiscated,
+        });
+        return summary;
+      }
+    );
+  }
+
+  private async runDailyFeeImpl(options: { dryRun?: boolean; force?: boolean } = {}): Promise<DailyFeeSummary> {
     const { dryRun = false, force = false } = options;
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
@@ -84,10 +108,10 @@ export class HostingFeeService {
       if (!acquired) {
         const state = await this.redis.get(lockKey);
         if (state === 'running') {
-          throw new Error(`A taxa diária de hospedagem para ${dateStr} já está em execução.`);
+          throw runRejected(`A taxa diária de hospedagem para ${dateStr} já está em execução.`, 'ALREADY_RUNNING');
         }
         if (!force) {
-          throw new Error(`A taxa diária de hospedagem para a data ${dateStr} já foi executada.`);
+          throw runRejected(`A taxa diária de hospedagem para a data ${dateStr} já foi executada.`, 'ALREADY_RAN');
         }
         // force: reexecução permitida; a idempotência por jogador evita cobrança em dobro
         await this.redis.set(lockKey, 'running', 'EX', RUN_LOCK_TTL_SECONDS);

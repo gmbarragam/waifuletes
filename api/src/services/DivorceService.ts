@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
 import { calculateDivorceRefund, getDailyDivorceRate } from '../utils/rarityCalculator.js';
 import { config } from '../config.js';
+import { withBusinessSpan, hashId, addEvent, setAttrs } from '../telemetry.js';
 import { MarketInvestmentService, BASE_MONEY_SUPPLY, INFLATION_ALPHA } from './MarketInvestmentService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
 
@@ -248,6 +249,10 @@ export class DivorceService {
   }
 
   async divorce(userId: string, characterId: string) {
+    return withBusinessSpan('divorce', { 'waifu.user.id_hash': hashId(userId) }, () => this.divorceImpl(userId, characterId));
+  }
+
+  private async divorceImpl(userId: string, characterId: string) {
     // 1. Localizar o personagem (flexível)
     let haremEntry = await this.prisma.haremEntry.findFirst({
       where: {
@@ -302,6 +307,12 @@ export class DivorceService {
       isSoulmate,
       inflationMultiplier,
       dailyDivorceRate: refundRate,
+    });
+    setAttrs({
+      'waifu.character.rarity': character.baseRarity,
+      'waifu.divorce.soulmate': isSoulmate,
+      'waifu.divorce.daily_number': currentDivorceNumber,
+      'waifu.divorce.soft_limit_applied': refundRate < 1.0,
     });
 
     // 5. Executar transação atômica
@@ -369,6 +380,8 @@ export class DivorceService {
 
       return updatedUser;
     });
+
+    addEvent('tx.commit', { 'waifu.market.cancelled_listings': cancelledListings });
 
     // 6. Incrementa contador no Redis
     await this.incrementDailyDivorceCount(userId, character.baseRarity).catch(() => {});

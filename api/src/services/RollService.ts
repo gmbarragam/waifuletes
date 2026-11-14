@@ -9,6 +9,7 @@ import {
   RollBonuses,
 } from '../utils/rarityCalculator.js';
 import { config, getLegendaryChanceCap } from '../config.js';
+import { withBusinessSpan, withSpan, setAttrs, addEvent, hashId, recordError, context, trace, type Span } from '../telemetry.js';
 
 export interface RollOptions {
   userId: string;
@@ -66,7 +67,15 @@ export class RollService {
    */
   async loadPool(): Promise<void> {
     if (this.isLoadingPool) return;
+    // Span próprio; fora de request (pré-carga no startup) vira raiz de um trace novo.
+    const hasParent = Boolean(trace.getSpan(context.active()));
+    return withSpan('pool load', { root: !hasParent }, (span) => this.loadPoolImpl(span));
+  }
+
+  private async loadPoolImpl(span: Span): Promise<void> {
+    if (this.isLoadingPool) return;
     this.isLoadingPool = true;
+    let source = 'db';
     try {
       let items = await this.prisma.character.findMany({
         where: { isActive: true },
@@ -89,16 +98,19 @@ export class RollService {
             const data = (await res.json()) as any;
             if (data.success && Array.isArray(data.pool)) {
               items = data.pool;
+              source = 'hub';
               console.log(`✅ [RollService] Pool remoto carregado com ${items.length} personagens em RAM!`);
             }
           }
         } catch (poolErr: any) {
           console.error('[RollService] Falha ao carregar pool remoto:', poolErr.message);
+          recordError(span, poolErr, 'pool_hub_fetch_failed');
         }
       }
 
       this.inMemoryPool = items;
       this.poolLoaded = true;
+      setAttrs({ 'waifu.pool.size': items.length, 'waifu.pool.source': source }, span);
     } finally {
       this.isLoadingPool = false;
     }
@@ -111,6 +123,19 @@ export class RollService {
   }
 
   async roll(options: RollOptions) {
+    return withBusinessSpan(
+      'roll',
+      {
+        'waifu.user.id_hash': hashId(options.userId),
+        'waifu.group.id_hash': hashId(options.groupId),
+        'waifu.roll.free': Boolean(options.bonuses?.isFreeRoll),
+        'waifu.roll.gender_filter': options.genderFilter,
+      },
+      () => this.rollImpl(options)
+    );
+  }
+
+  private async rollImpl(options: RollOptions) {
     const { userId, groupId, genderFilter, bonuses } = options;
     const extraMaxRolls = bonuses?.extraMaxRolls ?? 0;
     const isFreeRoll = Boolean(bonuses?.isFreeRoll);
@@ -126,6 +151,7 @@ export class RollService {
       const consumeRes = await this.cooldownService.consumeRoll(userId, extraMaxRolls);
       rollAvailable = consumeRes.success;
       rollsState = consumeRes.rollsState;
+      addEvent(rollAvailable ? 'cooldown.consumed' : 'cooldown.blocked', { 'waifu.rolls.available': rollsState.availableRolls });
     }
 
     if (!rollAvailable) {
@@ -148,9 +174,13 @@ export class RollService {
     let mythicRollRefunded = false;
     try {
       // 2. Garantir cache do pool em memória
+      let poolSource = 'memory';
       if (!this.poolLoaded || this.inMemoryPool.length === 0) {
         await this.loadPool();
+        poolSource = 'db';
+        addEvent('pool.loaded', { 'waifu.pool.size': this.inMemoryPool.length });
       }
+      setAttrs({ 'waifu.pool.size': this.inMemoryPool.length, 'waifu.pool.source': poolSource });
 
       // 3. Consultas secundárias leves em paralelo
       const [disabledRecords, wishlistRecords, claimedRecords, totalClaims, investmentRecords] = await Promise.all([
@@ -349,6 +379,8 @@ export class RollService {
       });
 
       // Se não encontrou no banco local e há UPSTREAM_API_URL configurada, busca e persiste JIT
+      const jitFetch = !chosen && Boolean(config.UPSTREAM_API_URL);
+      setAttrs({ 'waifu.roll.jit_fetch': jitFetch, 'waifu.roll.special': randomVal < specialTotalWeight });
       if (!chosen && config.UPSTREAM_API_URL) {
         const fetched = await this.characterService.findCharacter(chosenId);
         if (fetched) {
@@ -373,6 +405,8 @@ export class RollService {
       if (!chosen) {
         throw new Error('CHOSEN_CHARACTER_NOT_FOUND');
       }
+
+      setAttrs({ 'waifu.roll.rarity': chosen.isMythic ? 'MYTHIC' : chosen.baseRarity });
 
       // Personagens míticos funcionam como showcase e NÃO devem consumir roll do jogador
       if (chosen.isMythic && !isFreeRoll) {
@@ -684,6 +718,7 @@ export class RollService {
       // ainda não tiver sido estornado pela regra do Mítico — senão o jogador ganharia um roll grátis)
       if (!isFreeRoll && !mythicRollRefunded) {
         await this.cooldownService.refundRoll(userId, extraMaxRolls);
+        addEvent('cooldown.refunded');
       }
       if (err.message === 'NO_CHARACTERS_AVAILABLE') {
         return {
