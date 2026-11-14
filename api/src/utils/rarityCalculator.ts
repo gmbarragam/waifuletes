@@ -79,15 +79,18 @@ export interface DivorceRefundOptions {
 
 /**
  * Calcula o multiplicador de divórcio (1x a 7x) com base na posição do personagem dentro da sua categoria (raridade).
- * Exemplo do usuário:
- * - Posição 1 de 1.000: 7x (815.689 Zinthos para Lendário)
- * - Posição 500 de 1.000: 3.5x (407.845 Zinthos com arredondamento para cima)
+ * Utiliza curva exponencial cúbica concentrada no topo para proteger a economia de inflação:
+ * - Posição 1: 7.0x (Pico de recompensa no topo absoluto da categoria)
+ * - Top 10%: ~5.4x
+ * - Top 25%: ~3.5x
+ * - Top 50% (mediana): ~1.75x
  * - Posições inferiores têm piso mínimo garantido em 1.0x (não desvaloriza abaixo do valor base).
  */
 export function calculateRankMultiplier(position: number, total: number): number {
   if (!total || total <= 1 || !position || position <= 1) return 7.0;
   if (position >= total) return 1.0;
-  const mult = Math.max(1.0, 7.0 * (1.0 - (position - 1) / total));
+  const ratio = Math.max(0, 1.0 - (position - 1) / total);
+  const mult = Math.max(1.0, 1.0 + 6.0 * Math.pow(ratio, 3));
   return Number(mult.toFixed(4));
 }
 
