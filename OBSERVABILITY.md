@@ -17,7 +17,7 @@ ecossistema Ravena. A telemetria é **opcional** e fica **desligada por padrão*
    OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318
    OTEL_SERVICE_NAME=waifuletes
    ```
-3. `docker compose up -d api` (recria só o container da API). No log aparece
+3. `docker compose up -d --build api` (reconstrói a imagem com o código da telemetria e recria só o container da API). No log aparece
    `[otel] telemetria ligada -> http://host.docker.internal:4318`.
 
 Para desligar: remova `OTEL_EXPORTER_OTLP_ENDPOINT` ou defina `OTEL_SDK_DISABLED=true`.
