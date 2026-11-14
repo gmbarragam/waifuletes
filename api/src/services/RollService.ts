@@ -139,16 +139,17 @@ export class RollService {
     const { userId, groupId, genderFilter, bonuses } = options;
     const extraMaxRolls = bonuses?.extraMaxRolls ?? 0;
     const isFreeRoll = Boolean(bonuses?.isFreeRoll);
+    const rollSpan = trace.getActiveSpan();
 
     let rollAvailable = true;
     let rollsState: UserRollsState;
 
     if (isFreeRoll) {
       // Roll gratuito (ex: bônus de colheita da fazenda) - não debita do cooldown/banco de rolls
-      rollsState = await this.cooldownService.getUserRolls(userId, extraMaxRolls);
+      rollsState = await withSpan('roll cooldown.check', {}, () => this.cooldownService.getUserRolls(userId, extraMaxRolls));
     } else {
       // 1. Débito atômico de 1 roll no Redis antes de processar
-      const consumeRes = await this.cooldownService.consumeRoll(userId, extraMaxRolls);
+      const consumeRes = await withSpan('roll cooldown.consume', {}, () => this.cooldownService.consumeRoll(userId, extraMaxRolls));
       rollAvailable = consumeRes.success;
       rollsState = consumeRes.rollsState;
       addEvent(rollAvailable ? 'cooldown.consumed' : 'cooldown.blocked', { 'waifu.rolls.available': rollsState.availableRolls });
@@ -183,7 +184,7 @@ export class RollService {
       setAttrs({ 'waifu.pool.size': this.inMemoryPool.length, 'waifu.pool.source': poolSource });
 
       // 3. Consultas secundárias leves em paralelo
-      const [disabledRecords, wishlistRecords, claimedRecords, totalClaims, investmentRecords] = await Promise.all([
+      const [disabledRecords, wishlistRecords, claimedRecords, totalClaims, investmentRecords] = await withSpan('roll context.load', {}, () => Promise.all([
         this.prisma.groupDisabledSeries.findMany({
           where: { groupId },
           select: { characterId: true },
@@ -198,189 +199,200 @@ export class RollService {
           where: { userId },
           select: { characterId: true, shares: true },
         }),
-      ]);
+      ]));
 
       const disabledIds = new Set(disabledRecords.map((d) => d.characterId));
       const wishMap = new Map(wishlistRecords.map((w) => [w.characterId, w.isStarWish]));
       const claimedMap = new Map(claimedRecords.map((c) => [c.id, c.claimCount]));
       const investmentMap = new Map(investmentRecords.map((i) => [i.characterId, i.shares]));
 
-      // 4. Filtrar candidatos elegíveis
-      let candidates = this.inMemoryPool;
-      if (genderFilter) {
-        if (genderFilter === 'FEMALE') {
-          candidates = candidates.filter((c) => c.gender === 'FEMALE' || c.gender === 'OTHER');
-        } else if (genderFilter === 'MALE') {
-          candidates = candidates.filter((c) => c.gender === 'MALE' || c.gender === 'OTHER');
-        } else {
-          candidates = candidates.filter((c) => c.gender === genderFilter);
-        }
-      }
-      if (disabledIds.size > 0) {
-        candidates = candidates.filter((c) => !disabledIds.has(c.id));
-      }
-
-      if (candidates.length === 0) {
-        throw new Error('NO_CHARACTERS_AVAILABLE');
-      }
-
-      // 5. Particionamento O(1) de pesos de sorteio
-      // Separa os itens com modificadores especiais (wishlist ou claimCount > 0) dos comuns
-      const specialCandidates: { id: string; weight: number; rarity: Rarity }[] = [];
-      let specialTotalWeight = 0;
-      let specialLegWeight = 0;
-
-      // Agrupa os itens normais por raridade (todos têm o mesmo peso exato)
-      const normalByRarity: Record<Rarity, string[]> = {
-        COMMON: [],
-        UNCOMMON: [],
-        RARE: [],
-        EPIC: [],
-        LEGENDARY: [],
-      };
-
-      for (const char of candidates) {
-        const isWish = wishMap.has(char.id);
-        const claimCount = claimedMap.get(char.id) ?? 0;
-        const shares = investmentMap.get(char.id) ?? 0;
-
-        const isMythic = Boolean((char as any).isMythic);
-
-        if (isWish || claimCount > 0 || shares > 0 || isMythic) {
-          const effectiveRarity: Rarity = isMythic ? 'RARE' : char.baseRarity;
-          const weight = calculateCharacterWeight({
-            baseRarity: effectiveRarity,
-            claimCount,
-            totalActiveUsersOrClaims: totalClaims,
-            isWishlisted: isWish,
-            isStarWish: wishMap.get(char.id) ?? false,
-            bonuses,
-            investmentShares: shares,
-          });
-          specialCandidates.push({ id: char.id, weight, rarity: effectiveRarity });
-          specialTotalWeight += weight;
-          if (effectiveRarity === 'LEGENDARY') {
-            specialLegWeight += weight;
-          }
-        } else {
-          normalByRarity[char.baseRarity].push(char.id);
-        }
-      }
-
-      // Calcula peso base por raridade considerando multiplicadores
-      const rarityWeights: Record<Rarity, number> = {
-        COMMON: RARITY_BASE_WEIGHTS.COMMON * (bonuses?.rarityMultipliers?.COMMON ?? 1.0),
-        UNCOMMON: RARITY_BASE_WEIGHTS.UNCOMMON * (bonuses?.rarityMultipliers?.UNCOMMON ?? 1.0),
-        RARE: RARITY_BASE_WEIGHTS.RARE * (bonuses?.rarityMultipliers?.RARE ?? 1.0),
-        EPIC: RARITY_BASE_WEIGHTS.EPIC * (bonuses?.rarityMultipliers?.EPIC ?? 1.0),
-        LEGENDARY: RARITY_BASE_WEIGHTS.LEGENDARY * (bonuses?.rarityMultipliers?.LEGENDARY ?? 1.0),
-      };
-
-      const normalTierWeights: { rarity: Rarity; totalWeight: number }[] = [];
-      let normalTotalWeight = 0;
-      let normalLegWeight = 0;
-
-      for (const r of ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY'] as Rarity[]) {
-        const count = normalByRarity[r].length;
-        if (count > 0) {
-          const tierWeight = count * rarityWeights[r];
-          normalTierWeights.push({ rarity: r, totalWeight: tierWeight });
-          normalTotalWeight += tierWeight;
-          if (r === 'LEGENDARY') {
-            normalLegWeight = tierWeight;
+      // 4-5. Filtragem do pool em memória + pesos + sorteio (CPU pura sobre ~200 mil itens)
+      const picked = withSpan('roll pool.select', {}, (span) => {
+        // 4. Filtrar candidatos elegíveis
+        let candidates = this.inMemoryPool;
+        if (genderFilter) {
+          if (genderFilter === 'FEMALE') {
+            candidates = candidates.filter((c) => c.gender === 'FEMALE' || c.gender === 'OTHER');
+          } else if (genderFilter === 'MALE') {
+            candidates = candidates.filter((c) => c.gender === 'MALE' || c.gender === 'OTHER');
+          } else {
+            candidates = candidates.filter((c) => c.gender === genderFilter);
           }
         }
-      }
+        if (disabledIds.size > 0) {
+          candidates = candidates.filter((c) => !disabledIds.has(c.id));
+        }
 
-      // Aplicação do Cap Máximo de Chance para Lendários (ex: 0.8% no roll)
-      const currentLegWeight = specialLegWeight + normalLegWeight;
-      const initialGrandTotal = specialTotalWeight + normalTotalWeight;
-      const nonLegWeight = initialGrandTotal - currentLegWeight;
-      const legCapFraction = getLegendaryChanceCap();
+        if (candidates.length === 0) {
+          return null;
+        }
 
-      if (nonLegWeight > 0 && currentLegWeight > 0 && legCapFraction < 1.0) {
-        const currentLegFraction = currentLegWeight / initialGrandTotal;
-        if (currentLegFraction > legCapFraction) {
-          // targetLegWeight / (targetLegWeight + nonLegWeight) = legCapFraction
-          const targetLegWeight = (legCapFraction / (1 - legCapFraction)) * nonLegWeight;
-          const scaleFactor = targetLegWeight / currentLegWeight;
+        // 5. Particionamento O(1) de pesos de sorteio
+        // Separa os itens com modificadores especiais (wishlist ou claimCount > 0) dos comuns
+        const specialCandidates: { id: string; weight: number; rarity: Rarity }[] = [];
+        let specialTotalWeight = 0;
+        let specialLegWeight = 0;
 
-          specialTotalWeight -= specialLegWeight;
-          specialLegWeight = 0;
-          for (const item of specialCandidates) {
-            if (item.rarity === 'LEGENDARY') {
-              item.weight = Math.max(1, Math.round(item.weight * scaleFactor));
-              specialLegWeight += item.weight;
+        // Agrupa os itens normais por raridade (todos têm o mesmo peso exato)
+        const normalByRarity: Record<Rarity, string[]> = {
+          COMMON: [],
+          UNCOMMON: [],
+          RARE: [],
+          EPIC: [],
+          LEGENDARY: [],
+        };
+
+        for (const char of candidates) {
+          const isWish = wishMap.has(char.id);
+          const claimCount = claimedMap.get(char.id) ?? 0;
+          const shares = investmentMap.get(char.id) ?? 0;
+
+          const isMythic = Boolean((char as any).isMythic);
+
+          if (isWish || claimCount > 0 || shares > 0 || isMythic) {
+            const effectiveRarity: Rarity = isMythic ? 'RARE' : char.baseRarity;
+            const weight = calculateCharacterWeight({
+              baseRarity: effectiveRarity,
+              claimCount,
+              totalActiveUsersOrClaims: totalClaims,
+              isWishlisted: isWish,
+              isStarWish: wishMap.get(char.id) ?? false,
+              bonuses,
+              investmentShares: shares,
+            });
+            specialCandidates.push({ id: char.id, weight, rarity: effectiveRarity });
+            specialTotalWeight += weight;
+            if (effectiveRarity === 'LEGENDARY') {
+              specialLegWeight += weight;
+            }
+          } else {
+            normalByRarity[char.baseRarity].push(char.id);
+          }
+        }
+
+        // Calcula peso base por raridade considerando multiplicadores
+        const rarityWeights: Record<Rarity, number> = {
+          COMMON: RARITY_BASE_WEIGHTS.COMMON * (bonuses?.rarityMultipliers?.COMMON ?? 1.0),
+          UNCOMMON: RARITY_BASE_WEIGHTS.UNCOMMON * (bonuses?.rarityMultipliers?.UNCOMMON ?? 1.0),
+          RARE: RARITY_BASE_WEIGHTS.RARE * (bonuses?.rarityMultipliers?.RARE ?? 1.0),
+          EPIC: RARITY_BASE_WEIGHTS.EPIC * (bonuses?.rarityMultipliers?.EPIC ?? 1.0),
+          LEGENDARY: RARITY_BASE_WEIGHTS.LEGENDARY * (bonuses?.rarityMultipliers?.LEGENDARY ?? 1.0),
+        };
+
+        const normalTierWeights: { rarity: Rarity; totalWeight: number }[] = [];
+        let normalTotalWeight = 0;
+        let normalLegWeight = 0;
+
+        for (const r of ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY'] as Rarity[]) {
+          const count = normalByRarity[r].length;
+          if (count > 0) {
+            const tierWeight = count * rarityWeights[r];
+            normalTierWeights.push({ rarity: r, totalWeight: tierWeight });
+            normalTotalWeight += tierWeight;
+            if (r === 'LEGENDARY') {
+              normalLegWeight = tierWeight;
             }
           }
-          specialTotalWeight += specialLegWeight;
-
-          normalTotalWeight -= normalLegWeight;
-          const legTier = normalTierWeights.find((t) => t.rarity === 'LEGENDARY');
-          if (legTier) {
-            legTier.totalWeight = Math.max(1, Math.round(legTier.totalWeight * scaleFactor));
-            normalLegWeight = legTier.totalWeight;
-          } else {
-            normalLegWeight = 0;
-          }
-          normalTotalWeight += normalLegWeight;
         }
+
+        // Aplicação do Cap Máximo de Chance para Lendários (ex: 0.8% no roll)
+        const currentLegWeight = specialLegWeight + normalLegWeight;
+        const initialGrandTotal = specialTotalWeight + normalTotalWeight;
+        const nonLegWeight = initialGrandTotal - currentLegWeight;
+        const legCapFraction = getLegendaryChanceCap();
+
+        if (nonLegWeight > 0 && currentLegWeight > 0 && legCapFraction < 1.0) {
+          const currentLegFraction = currentLegWeight / initialGrandTotal;
+          if (currentLegFraction > legCapFraction) {
+            // targetLegWeight / (targetLegWeight + nonLegWeight) = legCapFraction
+            const targetLegWeight = (legCapFraction / (1 - legCapFraction)) * nonLegWeight;
+            const scaleFactor = targetLegWeight / currentLegWeight;
+
+            specialTotalWeight -= specialLegWeight;
+            specialLegWeight = 0;
+            for (const item of specialCandidates) {
+              if (item.rarity === 'LEGENDARY') {
+                item.weight = Math.max(1, Math.round(item.weight * scaleFactor));
+                specialLegWeight += item.weight;
+              }
+            }
+            specialTotalWeight += specialLegWeight;
+
+            normalTotalWeight -= normalLegWeight;
+            const legTier = normalTierWeights.find((t) => t.rarity === 'LEGENDARY');
+            if (legTier) {
+              legTier.totalWeight = Math.max(1, Math.round(legTier.totalWeight * scaleFactor));
+              normalLegWeight = legTier.totalWeight;
+            } else {
+              normalLegWeight = 0;
+            }
+            normalTotalWeight += normalLegWeight;
+          }
+        }
+
+        const grandTotalWeight = specialTotalWeight + normalTotalWeight;
+        const randomVal = Math.random() * grandTotalWeight;
+
+        let chosenId: string;
+        const special = randomVal < specialTotalWeight;
+
+        if (randomVal < specialTotalWeight) {
+          // Sorteou item especial (wishlist ou casado)
+          let acc = 0;
+          chosenId = specialCandidates[0].id;
+          for (const item of specialCandidates) {
+            acc += item.weight;
+            if (randomVal <= acc) {
+              chosenId = item.id;
+              break;
+            }
+          }
+        } else {
+          // Sorteou item normal: seleciona a faixa de raridade e escolhe uniformemente em O(1)
+          let remainder = randomVal - specialTotalWeight;
+          let chosenRarity: Rarity = normalTierWeights[0].rarity;
+
+          for (const tier of normalTierWeights) {
+            if (remainder <= tier.totalWeight) {
+              chosenRarity = tier.rarity;
+              break;
+            }
+            remainder -= tier.totalWeight;
+          }
+
+          const tierList = normalByRarity[chosenRarity];
+          const randomIndex = Math.floor(Math.random() * tierList.length);
+          chosenId = tierList[randomIndex];
+        }
+        setAttrs({ 'waifu.roll.candidates': candidates.length, 'waifu.roll.special_candidates': specialCandidates.length }, span);
+        return { chosenId, special };
+      });
+      if (!picked) {
+        throw new Error('NO_CHARACTERS_AVAILABLE');
       }
+      const { chosenId } = picked;
 
-      const grandTotalWeight = specialTotalWeight + normalTotalWeight;
-      const randomVal = Math.random() * grandTotalWeight;
-
-      let chosenId: string;
-
-      if (randomVal < specialTotalWeight) {
-        // Sorteou item especial (wishlist ou casado)
-        let acc = 0;
-        chosenId = specialCandidates[0].id;
-        for (const item of specialCandidates) {
-          acc += item.weight;
-          if (randomVal <= acc) {
-            chosenId = item.id;
-            break;
-          }
-        }
-      } else {
-        // Sorteou item normal: seleciona a faixa de raridade e escolhe uniformemente em O(1)
-        let remainder = randomVal - specialTotalWeight;
-        let chosenRarity: Rarity = normalTierWeights[0].rarity;
-
-        for (const tier of normalTierWeights) {
-          if (remainder <= tier.totalWeight) {
-            chosenRarity = tier.rarity;
-            break;
-          }
-          remainder -= tier.totalWeight;
-        }
-
-        const tierList = normalByRarity[chosenRarity];
-        const randomIndex = Math.floor(Math.random() * tierList.length);
-        chosenId = tierList[randomIndex];
-      }
-
-      // 6. Buscar detalhes completos apenas do personagem sorteado
-      let chosen = await this.prisma.character.findUnique({
-        where: { id: chosenId },
-        include: {
-          haremEntries: {
-            select: {
-              id: true,
-              userId: true,
-              keys: true,
-              user: {
-                select: { id: true, name: true },
+      // 6. Buscar detalhes completos apenas do personagem sorteado (+ JIT do Hub se faltar localmente)
+      const chosen = await withSpan('roll candidate.load', {}, async () => {
+        let chosen = await this.prisma.character.findUnique({
+          where: { id: chosenId },
+          include: {
+            haremEntries: {
+              select: {
+                id: true,
+                userId: true,
+                keys: true,
+                user: {
+                  select: { id: true, name: true },
+                },
               },
             },
           },
-        },
       });
 
       // Se não encontrou no banco local e há UPSTREAM_API_URL configurada, busca e persiste JIT
       const jitFetch = !chosen && Boolean(config.UPSTREAM_API_URL);
-      setAttrs({ 'waifu.roll.jit_fetch': jitFetch, 'waifu.roll.special': randomVal < specialTotalWeight });
+      setAttrs({ 'waifu.roll.jit_fetch': jitFetch, 'waifu.roll.special': picked.special }, rollSpan);
       if (!chosen && config.UPSTREAM_API_URL) {
         const fetched = await this.characterService.findCharacter(chosenId);
         if (fetched) {
@@ -402,6 +414,9 @@ export class RollService {
         }
       }
 
+      return chosen;
+      });
+
       if (!chosen) {
         throw new Error('CHOSEN_CHARACTER_NOT_FOUND');
       }
@@ -416,44 +431,47 @@ export class RollService {
       }
 
       // Buscar membros do grupo que têm esse personagem na wishlist
-      const groupWishlistEntries = groupId
-        ? await this.prisma.wishlistEntry.findMany({
-            where: {
-              characterId: chosen.id,
-              user: {
-                groups: {
-                  some: { groupId },
+      const wishlistUsers = await withSpan('roll wishlist.group', {}, async () => {
+        const groupWishlistEntries = groupId
+          ? await this.prisma.wishlistEntry.findMany({
+              where: {
+                characterId: chosen.id,
+                user: {
+                  groups: {
+                    some: { groupId },
+                  },
                 },
               },
-            },
-            select: {
-              userId: true,
-              isStarWish: true,
-              user: {
-                select: { id: true, name: true },
+              select: {
+                userId: true,
+                isStarWish: true,
+                user: {
+                  select: { id: true, name: true },
+                },
               },
-            },
-          })
-        : [];
+            })
+          : [];
 
-      const wishlistUsers = groupWishlistEntries.map((e) => ({
-        userId: e.userId,
-        name: e.user?.name || e.userId,
-        isStarWish: e.isStarWish,
-      }));
+        const wishlistUsers = groupWishlistEntries.map((e) => ({
+          userId: e.userId,
+          name: e.user?.name || e.userId,
+          isStarWish: e.isStarWish,
+        }));
 
-      // Garante que se o autor do roll tiver na wishlist, esteja presente na lista
-      if (wishMap.has(chosen.id) && !wishlistUsers.some((u) => u.userId === userId)) {
-        const roller = await this.prisma.user.findUnique({
-          where: { id: userId },
-          select: { id: true, name: true },
-        });
-        wishlistUsers.push({
-          userId,
-          name: roller?.name || userId,
-          isStarWish: wishMap.get(chosen.id) ?? false,
-        });
-      }
+        // Garante que se o autor do roll tiver na wishlist, esteja presente na lista
+        if (wishMap.has(chosen.id) && !wishlistUsers.some((u) => u.userId === userId)) {
+          const roller = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, name: true },
+          });
+          wishlistUsers.push({
+            userId,
+            name: roller?.name || userId,
+            isStarWish: wishMap.get(chosen.id) ?? false,
+          });
+        }
+        return wishlistUsers;
+      });
 
       // 7. Processar estado de dono e recompensas
       const existingHaremEntry = chosen.haremEntries[0];
@@ -466,129 +484,131 @@ export class RollService {
       let instantMarriage = false;
       let instantHaremEntry: any = null;
       let refundedCompetitorsCount = 0;
-      let rollerUser: { id: string; name: string; kakera: number } | null = null;
+      let rollerUser = null as { id: string; name: string; kakera: number } | null; // atribuído dentro do span claim.process
 
-      if (isClaimed) {
-        if (isOwner) {
-          if (chosen.isMythic) {
-            // Personagens Míticos possuem devoção eterna e não acumulam chaves nem viram soulmate
-            keyProgress = null;
-          } else {
-            // Dono rolou o próprio personagem -> +1 Key
-            const updatedHarem = await this.prisma.haremEntry.update({
-              where: { id: existingHaremEntry.id },
-              data: { keys: { increment: 1 } },
-            });
+      await withSpan('roll claim.process', { attributes: { 'waifu.roll.claimed': isClaimed } }, async () => {
+        if (isClaimed) {
+          if (isOwner) {
+            if (chosen.isMythic) {
+              // Personagens Míticos possuem devoção eterna e não acumulam chaves nem viram soulmate
+              keyProgress = null;
+            } else {
+              // Dono rolou o próprio personagem -> +1 Key
+              const updatedHarem = await this.prisma.haremEntry.update({
+                where: { id: existingHaremEntry.id },
+                data: { keys: { increment: 1 } },
+              });
 
-            const newKeys = updatedHarem.keys;
-            let becameSoulmate = false;
+              const newKeys = updatedHarem.keys;
+              let becameSoulmate = false;
 
-            if (newKeys >= config.SOULMATE_KEYS_REQUIRED) {
-              await this.prisma.soulmate.upsert({
-                where: {
-                  userId_characterId: {
+              if (newKeys >= config.SOULMATE_KEYS_REQUIRED) {
+                await this.prisma.soulmate.upsert({
+                  where: {
+                    userId_characterId: {
+                      userId,
+                      characterId: chosen.id,
+                    },
+                  },
+                  create: {
                     userId,
                     characterId: chosen.id,
                   },
-                },
-                create: {
-                  userId,
-                  characterId: chosen.id,
-                },
-                update: {},
-              });
-              becameSoulmate = true;
+                  update: {},
+                });
+                becameSoulmate = true;
+              }
+
+              keyProgress = {
+                currentKeys: newKeys,
+                requiredForSoulmate: config.SOULMATE_KEYS_REQUIRED,
+                isSoulmate: newKeys >= config.SOULMATE_KEYS_REQUIRED,
+                becameSoulmateNow: becameSoulmate && newKeys === config.SOULMATE_KEYS_REQUIRED,
+              };
             }
-
-            keyProgress = {
-              currentKeys: newKeys,
-              requiredForSoulmate: config.SOULMATE_KEYS_REQUIRED,
-              isSoulmate: newKeys >= config.SOULMATE_KEYS_REQUIRED,
-              becameSoulmateNow: becameSoulmate && newKeys === config.SOULMATE_KEYS_REQUIRED,
-            };
+          } else {
+            // Outro usuário é dono -> cristal de kakera
+            const crystalBase = KAKERA_CRYSTAL_BASE[chosen.baseRarity] ?? 10;
+            kakeraCrystalValue = crystalBase + existingHaremEntry.keys * 5;
           }
-        } else {
-          // Outro usuário é dono -> cristal de kakera
-          const crystalBase = KAKERA_CRYSTAL_BASE[chosen.baseRarity] ?? 10;
-          kakeraCrystalValue = crystalBase + existingHaremEntry.keys * 5;
-        }
-      } else if (rollerShares > 0) {
-        // CASAMENTO INSTANTÂNEO POR COTA!
-        // O usuário possuía ao menos 1 cota nesta waifu livre.
-        // O casamento é realizado instantaneamente no próprio roll sem cooldown!
-        instantMarriage = true;
-        rollerUser = await this.prisma.user.findUnique({
-          where: { id: userId },
-          select: { id: true, name: true, kakera: true },
-        });
-
-        const marryResult = await this.prisma.$transaction(async (tx) => {
-          const entry = await tx.haremEntry.create({
-            data: {
-              userId,
-              characterId: chosen.id,
-              claimedInGroup: groupId || 'ROLL_COTA',
-              keys: 1,
-            },
+        } else if (rollerShares > 0) {
+          // CASAMENTO INSTANTÂNEO POR COTA!
+          // O usuário possuía ao menos 1 cota nesta waifu livre.
+          // O casamento é realizado instantaneamente no próprio roll sem cooldown!
+          instantMarriage = true;
+          rollerUser = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, name: true, kakera: true },
           });
 
-          await tx.character.update({
-            where: { id: chosen.id },
-            data: { claimCount: { increment: 1 } },
-          });
-
-          // Deleta o investimento do autor do roll
-          await tx.characterInvestment.deleteMany({
-            where: { characterId: chosen.id, userId },
-          });
-
-          // Estorna concorrentes (se houver)
-          const competitors = await tx.characterInvestment.findMany({
-            where: { characterId: chosen.id, userId: { not: userId } },
-            include: { user: true },
-          });
-
-          for (const comp of competitors) {
-            const refundAmount = Math.floor(comp.totalZinthos * 0.5);
-
-            await tx.user.update({
-              where: { id: comp.userId },
-              data: { kakera: { increment: refundAmount } },
-            });
-
-            await tx.kakeraTransaction.create({
+          const marryResult = await this.prisma.$transaction(async (tx) => {
+            const entry = await tx.haremEntry.create({
               data: {
-                userId: comp.userId,
-                amount: refundAmount,
-                reason: 'MARKET_REFUND',
-                metadata: {
-                  type: 'INVESTMENT_ROLL_CLAIM_REFUND',
-                  characterId: chosen.id,
-                  characterName: chosen.name,
-                  sharesLost: comp.shares,
-                  totalInvested: comp.totalZinthos,
-                  refundRate: 0.5,
-                  marriedUserId: userId,
-                },
+                userId,
+                characterId: chosen.id,
+                claimedInGroup: groupId || 'ROLL_COTA',
+                keys: 1,
               },
             });
-          }
 
-          if (competitors.length > 0) {
-            await tx.characterInvestment.deleteMany({
-              where: { characterId: chosen.id, userId: { not: userId } },
+            await tx.character.update({
+              where: { id: chosen.id },
+              data: { claimCount: { increment: 1 } },
             });
-          }
 
-          return { entry, refundedCount: competitors.length };
-        });
+            // Deleta o investimento do autor do roll
+            await tx.characterInvestment.deleteMany({
+              where: { characterId: chosen.id, userId },
+            });
 
-        instantHaremEntry = marryResult.entry;
-        refundedCompetitorsCount = marryResult.refundedCount;
-      } else {
-        // Livre comum: lock não exclusivo de 300 segundos (qualquer um do grupo pode casar)
-        await this.cooldownService.setClaimLock(groupId, chosen.id, userId);
-      }
+            // Estorna concorrentes (se houver)
+            const competitors = await tx.characterInvestment.findMany({
+              where: { characterId: chosen.id, userId: { not: userId } },
+              include: { user: true },
+            });
+
+            for (const comp of competitors) {
+              const refundAmount = Math.floor(comp.totalZinthos * 0.5);
+
+              await tx.user.update({
+                where: { id: comp.userId },
+                data: { kakera: { increment: refundAmount } },
+              });
+
+              await tx.kakeraTransaction.create({
+                data: {
+                  userId: comp.userId,
+                  amount: refundAmount,
+                  reason: 'MARKET_REFUND',
+                  metadata: {
+                    type: 'INVESTMENT_ROLL_CLAIM_REFUND',
+                    characterId: chosen.id,
+                    characterName: chosen.name,
+                    sharesLost: comp.shares,
+                    totalInvested: comp.totalZinthos,
+                    refundRate: 0.5,
+                    marriedUserId: userId,
+                  },
+                },
+              });
+            }
+
+            if (competitors.length > 0) {
+              await tx.characterInvestment.deleteMany({
+                where: { characterId: chosen.id, userId: { not: userId } },
+              });
+            }
+
+            return { entry, refundedCount: competitors.length };
+          });
+
+          instantHaremEntry = marryResult.entry;
+          refundedCompetitorsCount = marryResult.refundedCount;
+        } else {
+          // Livre comum: lock não exclusivo de 300 segundos (qualquer um do grupo pode casar)
+          await this.cooldownService.setClaimLock(groupId, chosen.id, userId);
+        }
+      });
 
       // 8. Recompensa de Fragmentos de Zinthos por Roll
       const scrapRandom = Math.floor(Math.random() * (25 - 10 + 1)) + 10;
@@ -605,7 +625,7 @@ export class RollService {
       const totalScrap = Math.round(baseScrap * wishlistMultiplier);
       const wishlistScrapBonus = totalScrap - baseScrap;
 
-      await this.prisma.$transaction(async (tx) => {
+      await withSpan('roll reward.apply', {}, () => this.prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: userId },
           data: { kakera: { increment: totalScrap } },
@@ -630,7 +650,7 @@ export class RollService {
             },
           },
         });
-      });
+      }));
 
       const now = Date.now();
       const lockExpiresAt = !isClaimed && !instantMarriage ? new Date(now + config.CLAIM_LOCK_SECONDS * 1000) : null;
@@ -706,10 +726,12 @@ export class RollService {
           dailyMarryLimit: {
             rarity: chosen.baseRarity,
             // Informativo: uma falha de Redis aqui não pode derrubar um roll já concluído (e estornar o roll)
-            limitReached: await this.cooldownService
-              .canMarryDaily(userId, chosen.baseRarity, false)
-              .then((r) => !r.allowed)
-              .catch(() => false),
+            limitReached: await withSpan('roll daily_limit.check', {}, () =>
+              this.cooldownService
+                .canMarryDaily(userId, chosen.baseRarity, false)
+                .then((r) => !r.allowed)
+                .catch(() => false)
+            ),
           },
         },
       };
