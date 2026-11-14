@@ -3597,7 +3597,13 @@ async function openDivorceModal(charId, charName) {
       const data = res.data;
       const formatted = Number(data.refundedKakera || 0).toLocaleString('pt-BR');
       if (amountEl) {
-        amountEl.innerHTML = `+${formatted} Zinthos ${data.isSoulmate ? '<span style="color: #ec4899; font-size: 11px; margin-left: 4px;">(💖 Dourado)</span>' : ''}`;
+        const bonusTag = data.rankMultiplier && data.rankMultiplier > 1
+          ? `<span style="color: #eab308; font-size: 11px; margin-left: 4px;">(🏆 ${data.rankMultiplier}x #${data.rarityPosition || 1})</span>`
+          : '';
+        const soulmateTag = data.isSoulmate
+          ? '<span style="color: #ec4899; font-size: 11px; margin-left: 4px;">(💖 Dourado)</span>'
+          : '';
+        amountEl.innerHTML = `+${formatted} Zinthos ${bonusTag} ${soulmateTag}`;
       }
     } else if (amountEl) {
       amountEl.textContent = 'Indisponível no momento';
@@ -5645,7 +5651,12 @@ async function openViewOffersModal(listingId, characterName) {
         }
         const zinthosVal = offerAmount(offered.zinthos);
         if (zinthosVal !== 0) {
-          parts.push(`<div><strong>Moeda (Zinthos):</strong> ${formatOfferCurrencyHtml(zinthosVal, '🪙', 'Zinthos', '#f59e0b')}</div>`);
+          if (zinthosVal > 0) {
+            const netZinthos = Math.floor(zinthosVal * 0.95);
+            parts.push(`<div><strong>Moeda (Zinthos a receber):</strong> ${formatOfferCurrencyHtml(netZinthos, '🪙', 'Zinthos', '#f59e0b')} <span style="font-size: 11px; color: var(--text-muted);">(descontada taxa de negociação de 5% sobre ${zinthosVal.toLocaleString('pt-BR')})</span></div>`);
+          } else {
+            parts.push(`<div><strong>Moeda (Zinthos):</strong> ${formatOfferCurrencyHtml(zinthosVal, '🪙', 'Zinthos', '#f59e0b')}</div>`);
+          }
         }
         itemsHtml = parts.join('<div style="margin-top: 4px;"></div>') || '<span style="color: var(--text-muted);">Nenhum item especificado</span>';
       }
@@ -6147,6 +6158,7 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
 
   const zInput = document.getElementById('offer-zinthos-input');
   if (zInput) zInput.value = '0';
+  updateOfferZinthosSpreadNote();
   const balanceEl = document.getElementById('offer-user-zinthos-balance');
   if (balanceEl) {
     balanceEl.textContent = Number(buyerData?.kakera || 0).toLocaleString('pt-BR');
@@ -6724,15 +6736,28 @@ async function executeCancelSentOffer(offerId) {
 window.promptCancelSentOffer = promptCancelSentOffer;
 
 // Funções de controle de Zinthos no modal de oferta
+function updateOfferZinthosSpreadNote() {
+  const input = document.getElementById('offer-zinthos-input');
+  const note = document.getElementById('offer-zinthos-spread-note');
+  if (!note) return;
+  const raw = input ? parseInt(input.value, 10) : 0;
+  const val = Math.max(0, isNaN(raw) ? 0 : raw);
+  const net = Math.floor(val * 0.95);
+  note.textContent = `(O vendedor irá receber ${net.toLocaleString('pt-BR')} zinthos (descontado taxa de negociação))`;
+}
+window.updateOfferZinthosSpreadNote = updateOfferZinthosSpreadNote;
+
 function setOfferZinthosMax() {
   const max = Number(userSessionData?.kakera || 0);
   const input = document.getElementById('offer-zinthos-input');
   if (input) input.value = max;
+  updateOfferZinthosSpreadNote();
 }
 
 function setOfferZinthosZero() {
   const input = document.getElementById('offer-zinthos-input');
   if (input) input.value = '0';
+  updateOfferZinthosSpreadNote();
 }
 
 function addOfferZinthos(amount) {
@@ -6741,6 +6766,7 @@ function addOfferZinthos(amount) {
   const current = parseInt(input.value, 10) || 0;
   const max = Number(userSessionData?.kakera || 0);
   input.value = Math.min(max, current + amount);
+  updateOfferZinthosSpreadNote();
 }
 
 // Cobiçar personagem casado

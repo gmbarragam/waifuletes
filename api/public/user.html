@@ -1154,10 +1154,11 @@
               <div class="form-group" style="margin-bottom: 8px;">
                 <label class="retro-label">Quantidade de Zinthos a oferecer:</label>
                 <div style="display: flex; gap: 8px; align-items: center;">
-                  <input type="number" id="offer-zinthos-input" class="retro-input" min="0" step="1" value="0" placeholder="0">
+                  <input type="number" id="offer-zinthos-input" class="retro-input" min="0" step="1" value="0" placeholder="0" oninput="updateOfferZinthosSpreadNote()">
                   <button type="button" class="btn-retro btn-sm" onclick="setOfferZinthosMax()">Máximo</button>
                   <button type="button" class="btn-retro btn-sm btn-danger" onclick="setOfferZinthosZero()">Zerar</button>
                 </div>
+                <div id="offer-zinthos-spread-note" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; font-weight: 600;">(O vendedor irá receber 0 zinthos (descontado taxa de negociação))</div>
               </div>
               <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;">
                 <button type="button" class="btn-retro btn-sm" onclick="addOfferZinthos(100)">+100</button>
