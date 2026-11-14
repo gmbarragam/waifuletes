@@ -291,6 +291,9 @@ async function start(): Promise<void> {
     ],
   });
 
+  // O construtor do NodeSDK troca o logger de diagnóstico quando OTEL_LOG_LEVEL está definido;
+  // reaplica o logger compacto (sem stack, com limite de frequência).
+  diag.setLogger(createQuietDiagLogger(), DiagLogLevel[level] ?? DiagLogLevel.ERROR);
   sdk.start();
   (globalThis as any).__OTEL_ENABLED = true;
 
