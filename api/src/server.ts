@@ -14,6 +14,7 @@ import prismaPlugin from './plugins/prisma.js';
 import redisPlugin from './plugins/redis.js';
 import { isTrustedRequest } from './plugins/auth.js';
 import { DomainError } from './errors/DomainError.js';
+import { activeSpan, recordError } from './telemetry.js';
 
 // Rotas públicas
 import { publicCharacterRoutes } from './routes/public/characters.js';
@@ -181,6 +182,11 @@ async function buildServer() {
     return sendHtmlNoCache(reply, 'user.html');
   });
 
+  // Esvazia a fila de spans no encerramento (teto de 3 s; no-op sem telemetria).
+  fastify.addHook('onClose', async () => {
+    await (globalThis as any).__OTEL_SHUTDOWN?.();
+  });
+
   // Plugins de infraestrutura
   await fastify.register(prismaPlugin);
   await fastify.register(redisPlugin);
@@ -221,6 +227,7 @@ async function buildServer() {
 
     request.log.error(error);
     const statusCode = error.statusCode || 500;
+    if (statusCode >= 500) recordError(activeSpan(), error);
     return reply.status(statusCode).send({
       success: false,
       error: {
