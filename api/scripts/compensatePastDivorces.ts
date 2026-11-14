@@ -8,7 +8,16 @@
  */
 
 import { PrismaClient, Rarity } from '@prisma/client';
-import { calculateRankMultiplier } from '../src/utils/rarityCalculator.js';
+
+// Suporta execução tanto no host (src/) quanto dentro do container Docker (dist/)
+let calculateRankMultiplier: (position: number, totalInRarity: number) => number;
+try {
+  const mod = await import('../src/utils/rarityCalculator.js');
+  calculateRankMultiplier = mod.calculateRankMultiplier;
+} catch {
+  const mod = await import('../dist/utils/rarityCalculator.js');
+  calculateRankMultiplier = mod.calculateRankMultiplier;
+}
 
 const prisma = new PrismaClient();
 

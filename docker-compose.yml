@@ -19,6 +19,7 @@ services:
       - ${CHARACTERS_DIR:-./media/characters}:/app/media/characters
       - ./api/prisma:/app/prisma
       - ./api/public:/app/public
+      - ./api/scripts:/app/scripts
     depends_on:
       postgres:
         condition: service_healthy
