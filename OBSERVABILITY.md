@@ -136,3 +136,15 @@ curl "localhost:16686/api/v3/traces?query.service_name=waifuletes&query.operatio
 - Redis: `get`/`ttl` são ~metade dos spans. O `@opentelemetry/instrumentation-ioredis` 0.71 não tem opção para
   pular comandos de pipeline/multi (só prefixa o nome); o corte fica no collector (`filter/fast-redis`, spans Redis
   < 1 ms).
+
+## Identificar um usuário a partir de um trace (operador autorizado)
+
+Os spans só têm pseudônimos (`waifu.user.id_hash`). Quem tem acesso à máquina e ao `OTEL_ID_SALT` usa a ferramenta da ravena-ai, que recalcula o HMAC localmente e consulta também este serviço (via `docker exec`):
+
+```bash
+cd ../ravena-ai
+python3 observability/tools/quem-e.py <id_hash>        # hash → ID (+ nome/apelido)
+python3 observability/tools/quem-e.py --id <ID>        # ID → hashes + links do Jaeger
+```
+
+O hash de um mesmo usuário é **igual nos 3 serviços**: usuário = ID sem sufixo, cortado no primeiro `@` e no primeiro `:`. Grupo = ID completo. O salt nunca é impresso. O resultado é dado pessoal e serve só para a investigação. Detalhes no `OBSERVABILITY.md` da ravena-ai, seção 4.
