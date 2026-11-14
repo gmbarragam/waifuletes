@@ -136,31 +136,46 @@ function createNormalizingProcessor(urls: typeof import('./telemetryUrl.js')) {
  * Diag logger enxuto: só a 1ª linha da mensagem (sem stack) e no máximo 1 vez por minuto por tipo
  * (ex.: ECONNREFUSED a cada export enquanto o collector está fora do ar).
  */
+/** Resumo de um erro/objeto: `código: mensagem` (1ª linha), nunca a stack nem o JSON inteiro. */
+function summarizeObject(o: any): string {
+  const code = typeof o?.code === 'string' || typeof o?.code === 'number' ? String(o.code) : '';
+  let msg = typeof o?.message === 'string' ? o.message.split('\n', 1)[0].trim() : '';
+  // AggregateError (ECONNREFUSED em IPv4 + IPv6) vem com message vazia e os erros em `errors`.
+  if (!msg && o?.errors !== undefined) {
+    const first = Array.isArray(o.errors) ? o.errors[0] : String(o.errors).split(',', 1)[0];
+    msg = first && typeof first === 'object' ? summarizeObject(first) : String(first ?? '').split('\n', 1)[0].trim();
+  }
+  // Sem message: só o cabeçalho da stack ("AggregateError [ECONNREFUSED]: "), nunca os frames.
+  if (!msg && typeof o?.stack === 'string') msg = o.stack.split('\n', 1)[0].trim();
+  if (code && msg.includes(code)) return msg;
+  return code && msg ? `${code}: ${msg}` : code || msg || '[obj]';
+}
+
+/** 1ª linha de uma mensagem do diag; JSON embutido (o exporter serializa o erro) vira só message/code. */
+export function diagFirstLine(v: unknown): string {
+  if (v instanceof Error) {
+    const s = summarizeObject(v);
+    return s.startsWith(v.name) ? s : `${v.name}: ${s}`;
+  }
+  if (v && typeof v === 'object') return summarizeObject(v);
+  const str = String(v);
+  const at = str.indexOf('{');
+  if (at >= 0) {
+    const tail = str.slice(at);
+    const end = tail.lastIndexOf('}');
+    try {
+      const o = JSON.parse(end >= 0 ? tail.slice(0, end + 1) : tail);
+      if (o && typeof o === 'object') return `${str.slice(0, at)}${summarizeObject(o)}`.split('\n', 1)[0];
+    } catch {
+      /* não é JSON */
+    }
+  }
+  return str.split('\n', 1)[0];
+}
+
 function createQuietDiagLogger() {
   const lastByKey = new Map<string, number>();
-  const firstLine = (v: unknown): string => {
-    if (v instanceof Error) return `${v.name}: ${v.message}`.split('\n')[0];
-    if (v && typeof v === 'object') {
-      const o = v as any;
-      if (typeof o.message === 'string') return String(o.code ? `${o.code} ${o.message}` : o.message).split('\n')[0];
-      try {
-        return JSON.stringify(v).slice(0, 200);
-      } catch {
-        return '[obj]';
-      }
-    }
-    const str = String(v);
-    // O exporter OTLP serializa o erro em JSON ({"stack": ..., "message": ..., "code": ...}).
-    if (str.startsWith('{')) {
-      try {
-        const o = JSON.parse(str);
-        if (o && typeof o.message === 'string') return String(o.code ? `${o.code} ${o.message}` : o.message).split('\n')[0];
-      } catch {
-        /* não é JSON */
-      }
-    }
-    return str.split('\n')[0];
-  };
+  const firstLine = diagFirstLine;
   const emit = (level: 'error' | 'warn' | 'info' | 'debug', message: string, args: unknown[]) => {
     const line = [firstLine(message), ...args.slice(0, 2).map(firstLine)].join(' ').slice(0, 300);
     const key = `${level}:${line.replace(/\d+/g, '#').slice(0, 120)}`;
@@ -285,6 +300,12 @@ async function start(): Promise<void> {
         instrumentHooks: ['preHandler'],
         ignorePaths: (route: { url?: string }) => IGNORED_FASTIFY_ROUTES.test(route?.url || ''),
         requestHook: (span: any) => sanitizeSpanUrls(span),
+        // Os handlers são `handler: async (...) => {}` e o span saía `handler - handler`: usa a rota
+        // (template, cardinalidade limitada), ex.: `handler - /roll`.
+        lifecycleHook: (span: any, info: { hookName?: string; request?: any; handler?: string }) => {
+          const route = info?.request?.routeOptions?.url;
+          if (info?.hookName === 'handler' && typeof route === 'string' && route) span.updateName(`handler - ${route}`);
+        },
       }),
       new IORedisInstrumentation({
         requireParentSpan: true,
