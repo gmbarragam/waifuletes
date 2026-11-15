@@ -111,9 +111,39 @@ export interface WeightCalculationParams {
   isStarWish?: boolean;
   bonuses?: RollBonuses;
   investmentShares?: number;
+  weeklyLegendaryMultiplier?: number;
+}
+
+/**
+ * Retorna o multiplicador de probabilidade para sorteio de personagens Lendários (0.0 a 1.0)
+ * baseado na quantidade de Lendários já obtidos pelo usuário na semana corrente.
+ *
+ * Curva de Diminishing Returns:
+ * - 0 lendárias na semana: 1.0 (100% da chance base/cap)
+ * - 1 lendária: ~0.82 (82%)
+ * - 2 lendárias: ~0.65 (65%)
+ * - 3 lendárias: ~0.49 (49%)
+ * - 4 lendárias: ~0.35 (35%)
+ * - 5 lendárias: ~0.23 (23%)
+ * - 6 lendárias: ~0.13 (13%)
+ * - 7 lendárias: ~0.04 (4%)
+ * - 8+ lendárias: 0.0 (Hard Cap: 0% de chance, bloqueio total de novos sorteios de Lendários na semana)
+ */
+export function calculateWeeklyLegendaryMultiplier(weeklyCount: number, hardCap: number = 8): number {
+  if (hardCap <= 0) return 1.0;
+  if (weeklyCount >= hardCap) return 0.0;
+  if (weeklyCount <= 0) return 1.0;
+
+  const ratio = (hardCap - weeklyCount) / hardCap;
+  const mult = Math.pow(ratio, 1.5);
+  return Math.max(0, Math.min(1.0, mult));
 }
 
 export function calculateCharacterWeight(params: WeightCalculationParams): number {
+  if (params.baseRarity === 'LEGENDARY' && params.weeklyLegendaryMultiplier !== undefined && params.weeklyLegendaryMultiplier <= 0) {
+    return 0;
+  }
+
   let base = RARITY_BASE_WEIGHTS[params.baseRarity] ?? 100;
 
   // Custom rarity multiplier / donor bonus
@@ -142,6 +172,9 @@ export function calculateCharacterWeight(params: WeightCalculationParams): numbe
     }
     const combinedMult = Math.max(1.0, rMult + Math.max(0, wMult - 1.0));
     finalWeight = base * combinedMult * popularityFactor;
+    if (typeof params.weeklyLegendaryMultiplier === 'number') {
+      finalWeight *= params.weeklyLegendaryMultiplier;
+    }
   } else {
     if (typeof rarityMult === 'number' && rarityMult > 0) {
       base *= rarityMult;
@@ -164,6 +197,10 @@ export function calculateCharacterWeight(params: WeightCalculationParams): numbe
   if (params.investmentShares && params.investmentShares > 0) {
     const shareMult = params.investmentShares === 1 ? 4 : params.investmentShares === 2 ? 10 : 25;
     finalWeight *= shareMult;
+  }
+
+  if (params.baseRarity === 'LEGENDARY' && params.weeklyLegendaryMultiplier !== undefined && params.weeklyLegendaryMultiplier <= 0) {
+    return 0;
   }
 
   return Math.max(1, Math.round(finalWeight));

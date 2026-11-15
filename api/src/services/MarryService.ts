@@ -256,6 +256,9 @@ export class MarryService {
 
     // 7. Incrementa o contador de casamento diário para esta raridade
     await this.cooldownService.incrementDailyMarry(userId, rarity, 1.0);
+    if (rarity === Rarity.LEGENDARY) {
+      await this.cooldownService.incrementWeeklyLegendary(userId, 1);
+    }
 
     const nextClaimAt = new Date(Date.now() + cooldownSecs * 1000);
 
@@ -399,6 +402,9 @@ export class MarryService {
     }
 
     const { entry: haremEntry, character: claimedCharacter } = transactionResult;
+    if (claimedCharacter.baseRarity === Rarity.LEGENDARY) {
+      await this.cooldownService.incrementWeeklyLegendary(userId, 1);
+    }
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },

@@ -18,6 +18,12 @@ export interface DailyCycleInfo {
   secondsUntilReset: number;
 }
 
+export interface WeeklyCycleInfo {
+  currentCycleStart: Date;
+  nextReset: Date;
+  secondsUntilReset: number;
+}
+
 export interface ClaimCooldownByRarity {
   active: boolean;
   remainingSeconds: number;
@@ -214,6 +220,10 @@ export class CooldownService {
 
   private dailyTradeKey(userId: string, rarity: Rarity): string {
     return `cooldown:daily:trade:${userId}:${rarity}`;
+  }
+
+  private weeklyLegendaryKey(userId: string): string {
+    return `cooldown:weekly:marry:${userId}:LEGENDARY`;
   }
 
   private lockKey(groupId: string, characterId: string): string {
@@ -511,6 +521,61 @@ export class CooldownService {
       nextReset,
       secondsUntilReset,
     };
+  }
+
+  getWeeklyCycleInfo(date: Date = new Date()): WeeklyCycleInfo {
+    const resetHourUtc = config.DAILY_RESET_HOUR_UTC ?? 7;
+    const resetMinuteUtc = config.DAILY_RESET_MINUTE_UTC || 0;
+
+    const day = date.getUTCDay(); // 0 (Sun), 1 (Mon), ..., 6 (Sat)
+    const daysSinceMonday = (day + 6) % 7; // Mon=0, Tue=1, ..., Sun=6
+
+    const mondayReset = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - daysSinceMonday, resetHourUtc, resetMinuteUtc, 0, 0)
+    );
+
+    let currentCycleStart: Date;
+    let nextReset: Date;
+
+    if (date.getTime() < mondayReset.getTime()) {
+      nextReset = mondayReset;
+      currentCycleStart = new Date(mondayReset.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else {
+      currentCycleStart = mondayReset;
+      nextReset = new Date(mondayReset.getTime() + 7 * 24 * 60 * 60 * 1000);
+    }
+
+    const secondsUntilReset = Math.max(1, Math.ceil((nextReset.getTime() - date.getTime()) / 1000));
+
+    return {
+      currentCycleStart,
+      nextReset,
+      secondsUntilReset,
+    };
+  }
+
+  async getWeeklyLegendaryCount(userId: string): Promise<number | null> {
+    const raw = await this.redis.get(this.weeklyLegendaryKey(userId));
+    if (raw === null || raw === undefined) return null;
+    const parsed = parseInt(raw, 10);
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  async setWeeklyLegendaryCount(userId: string, count: number): Promise<void> {
+    const ttl = Math.max(1, this.getWeeklyCycleInfo().secondsUntilReset);
+    await this.redis.set(this.weeklyLegendaryKey(userId), String(count), 'EX', ttl);
+  }
+
+  async incrementWeeklyLegendary(userId: string, count: number = 1): Promise<void> {
+    const key = this.weeklyLegendaryKey(userId);
+    const ttl = Math.max(1, this.getWeeklyCycleInfo().secondsUntilReset);
+    await this.redis.eval(INCR_WITH_TTL_LUA, 1, key, String(count), String(ttl), '0');
+  }
+
+  async decrementWeeklyLegendary(userId: string, count: number = 1): Promise<void> {
+    const key = this.weeklyLegendaryKey(userId);
+    const ttl = Math.max(1, this.getWeeklyCycleInfo().secondsUntilReset);
+    await this.redis.eval(INCR_WITH_TTL_LUA, 1, key, String(-count), String(ttl), '0');
   }
 
   async getDailyCooldown(userId: string): Promise<{ active: boolean; remainingSeconds: number; retryAfter?: Date }> {

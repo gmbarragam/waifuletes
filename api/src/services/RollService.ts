@@ -3,6 +3,7 @@ import { CooldownService, UserRollsState } from './CooldownService.js';
 import { CharacterService } from './CharacterService.js';
 import {
   calculateCharacterWeight,
+  calculateWeeklyLegendaryMultiplier,
   RARITY_DIVORCE_VALUES,
   KAKERA_CRYSTAL_BASE,
   RARITY_BASE_WEIGHTS,
@@ -59,6 +60,22 @@ export class RollService {
       this.lastClaimedRecordsFetch = now;
     }
     return this.cachedClaimedRecords;
+  }
+
+  async getWeeklyLegendaryCount(userId: string): Promise<number> {
+    const cached = await this.cooldownService.getWeeklyLegendaryCount(userId);
+    if (cached !== null) return cached;
+
+    const cycle = this.cooldownService.getWeeklyCycleInfo();
+    const count = await this.prisma.haremEntry.count({
+      where: {
+        userId,
+        claimedAt: { gte: cycle.currentCycleStart },
+        character: { baseRarity: 'LEGENDARY' },
+      },
+    });
+    await this.cooldownService.setWeeklyLegendaryCount(userId, count);
+    return count;
   }
 
   /**
@@ -184,7 +201,7 @@ export class RollService {
       setAttrs({ 'waifu.pool.size': this.inMemoryPool.length, 'waifu.pool.source': poolSource });
 
       // 3. Consultas secundárias leves em paralelo
-      const [disabledRecords, wishlistRecords, claimedRecords, totalClaims, investmentRecords] = await withSpan('roll context.load', {}, () => Promise.all([
+      const [disabledRecords, wishlistRecords, claimedRecords, totalClaims, investmentRecords, weeklyLegCount] = await withSpan('roll context.load', {}, () => Promise.all([
         this.prisma.groupDisabledSeries.findMany({
           where: { groupId },
           select: { characterId: true },
@@ -199,7 +216,14 @@ export class RollService {
           where: { userId },
           select: { characterId: true, shares: true },
         }),
+        this.getWeeklyLegendaryCount(userId),
       ]));
+
+      const weeklyLegMultiplier = calculateWeeklyLegendaryMultiplier(weeklyLegCount, config.WEEKLY_LEGENDARY_HARD_CAP);
+      setAttrs({
+        'waifu.roll.weekly_legendaries': weeklyLegCount,
+        'waifu.roll.weekly_leg_multiplier': weeklyLegMultiplier,
+      }, rollSpan);
 
       const disabledIds = new Set(disabledRecords.map((d) => d.characterId));
       const wishMap = new Map(wishlistRecords.map((w) => [w.characterId, w.isStarWish]));
@@ -242,7 +266,14 @@ export class RollService {
           LEGENDARY: [],
         };
 
+        const isLegBlocked = weeklyLegMultiplier <= 0;
+
         for (const char of candidates) {
+          // Se Lendários estiverem bloqueados nesta semana (hard cap atingido), ignora
+          if (isLegBlocked && char.baseRarity === 'LEGENDARY' && !(char as any).isMythic) {
+            continue;
+          }
+
           const isWish = wishMap.has(char.id);
           const claimCount = claimedMap.get(char.id) ?? 0;
           const shares = investmentMap.get(char.id) ?? 0;
@@ -251,6 +282,9 @@ export class RollService {
 
           if (isWish || claimCount > 0 || shares > 0 || isMythic) {
             const effectiveRarity: Rarity = isMythic ? 'RARE' : char.baseRarity;
+            if (isLegBlocked && effectiveRarity === 'LEGENDARY') {
+              continue;
+            }
             const weight = calculateCharacterWeight({
               baseRarity: effectiveRarity,
               claimCount,
@@ -259,24 +293,29 @@ export class RollService {
               isStarWish: wishMap.get(char.id) ?? false,
               bonuses,
               investmentShares: shares,
+              weeklyLegendaryMultiplier: effectiveRarity === 'LEGENDARY' ? weeklyLegMultiplier : undefined,
             });
-            specialCandidates.push({ id: char.id, weight, rarity: effectiveRarity });
-            specialTotalWeight += weight;
-            if (effectiveRarity === 'LEGENDARY') {
-              specialLegWeight += weight;
+            if (weight > 0) {
+              specialCandidates.push({ id: char.id, weight, rarity: effectiveRarity });
+              specialTotalWeight += weight;
+              if (effectiveRarity === 'LEGENDARY') {
+                specialLegWeight += weight;
+              }
             }
           } else {
             normalByRarity[char.baseRarity].push(char.id);
           }
         }
 
-        // Calcula peso base por raridade considerando multiplicadores
+        // Calcula peso base por raridade considerando multiplicadores e diminishing returns
         const rarityWeights: Record<Rarity, number> = {
           COMMON: RARITY_BASE_WEIGHTS.COMMON * (bonuses?.rarityMultipliers?.COMMON ?? 1.0),
           UNCOMMON: RARITY_BASE_WEIGHTS.UNCOMMON * (bonuses?.rarityMultipliers?.UNCOMMON ?? 1.0),
           RARE: RARITY_BASE_WEIGHTS.RARE * (bonuses?.rarityMultipliers?.RARE ?? 1.0),
           EPIC: RARITY_BASE_WEIGHTS.EPIC * (bonuses?.rarityMultipliers?.EPIC ?? 1.0),
-          LEGENDARY: RARITY_BASE_WEIGHTS.LEGENDARY * (bonuses?.rarityMultipliers?.LEGENDARY ?? 1.0),
+          LEGENDARY: isLegBlocked
+            ? 0
+            : RARITY_BASE_WEIGHTS.LEGENDARY * (bonuses?.rarityMultipliers?.LEGENDARY ?? 1.0) * weeklyLegMultiplier,
         };
 
         const normalTierWeights: { rarity: Rarity; totalWeight: number }[] = [];
@@ -285,7 +324,7 @@ export class RollService {
 
         for (const r of ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY'] as Rarity[]) {
           const count = normalByRarity[r].length;
-          if (count > 0) {
+          if (count > 0 && (!isLegBlocked || r !== 'LEGENDARY')) {
             const tierWeight = count * rarityWeights[r];
             normalTierWeights.push({ rarity: r, totalWeight: tierWeight });
             normalTotalWeight += tierWeight;
@@ -295,11 +334,11 @@ export class RollService {
           }
         }
 
-        // Aplicação do Cap Máximo de Chance para Lendários (ex: 0.8% no roll)
+        // Aplicação do Cap Máximo de Chance para Lendários (ex: 0.8% escalado proporcionalmente por diminishing returns)
         const currentLegWeight = specialLegWeight + normalLegWeight;
         const initialGrandTotal = specialTotalWeight + normalTotalWeight;
         const nonLegWeight = initialGrandTotal - currentLegWeight;
-        const legCapFraction = getLegendaryChanceCap();
+        const legCapFraction = isLegBlocked ? 0 : getLegendaryChanceCap() * weeklyLegMultiplier;
 
         if (nonLegWeight > 0 && currentLegWeight > 0 && legCapFraction < 1.0) {
           const currentLegFraction = currentLegWeight / initialGrandTotal;
@@ -604,6 +643,9 @@ export class RollService {
 
           instantHaremEntry = marryResult.entry;
           refundedCompetitorsCount = marryResult.refundedCount;
+          if (chosen.baseRarity === 'LEGENDARY') {
+            await this.cooldownService.incrementWeeklyLegendary(userId, 1);
+          }
         } else {
           // Livre comum: lock não exclusivo de 300 segundos (qualquer um do grupo pode casar)
           await this.cooldownService.setClaimLock(groupId, chosen.id, userId);

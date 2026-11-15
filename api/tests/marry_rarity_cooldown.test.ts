@@ -156,7 +156,7 @@ describe('💍 Sistema de Cooldown de Casamento por Raridade (CooldownService)',
     expect(RARITY_CLAIM_COOLDOWNS.UNCOMMON).toBe(2700); // 45 minutos
     expect(RARITY_CLAIM_COOLDOWNS.RARE).toBe(3600); // 60 minutos
     expect(RARITY_CLAIM_COOLDOWNS.EPIC).toBe(5400); // 1h 30m
-    expect(RARITY_CLAIM_COOLDOWNS.LEGENDARY).toBe(7200); // 2h (atual)
+    expect(RARITY_CLAIM_COOLDOWNS.LEGENDARY).toBe(21600); // 6h
   });
 
   it('deve adquirir lock de COMMON e permitir adquirir UNCOMMON imediatamente sem bloqueio mútuo', async () => {

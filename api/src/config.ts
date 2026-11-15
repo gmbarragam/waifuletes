@@ -28,7 +28,7 @@ const envSchema = z.object({
   COOLDOWN_CLAIM_SECONDS_UNCOMMON: z.coerce.number().default(2700), // 45 min
   COOLDOWN_CLAIM_SECONDS_RARE: z.coerce.number().default(3600), // 60 min (1 hora)
   COOLDOWN_CLAIM_SECONDS_EPIC: z.coerce.number().default(5400), // 90 min (1h30min)
-  COOLDOWN_CLAIM_SECONDS_LEGENDARY: z.coerce.number().default(7200), // 120 min (2 horas)
+  COOLDOWN_CLAIM_SECONDS_LEGENDARY: z.coerce.number().default(21600), // 360 min (6 horas)
   COOLDOWN_DAILY_SECONDS: z.coerce.number().default(72000), // Fallback legado
   DAILY_RESET_HOUR_UTC: z.coerce.number().default(7), // 07:00 UTC = 04:00 BRT (Horário de Brasília)
   DAILY_RESET_MINUTE_UTC: z.coerce.number().default(0),
@@ -38,6 +38,7 @@ const envSchema = z.object({
   ROLL_REGEN_SECONDS: z.coerce.number().default(300), // 5 min
   ROLL_REGEN_ACCEL_FACTOR: z.coerce.number().default(20), // Dividido por 1000 (20 = 0.020)
   ROLL_LEGENDARY_CHANCE_CAP: z.coerce.number().default(80), // 0 a 10000 (80 = 0.80%, 1 = 0.01%, 10000 = 10%)
+  WEEKLY_LEGENDARY_HARD_CAP: z.coerce.number().default(8), // Teto semanal de Lendárias obtidas por jogador no roll (8 = 0% de chance após a 8ª)
 
   SOULMATE_KEYS_REQUIRED: z.coerce.number().default(10),
   WISHLIST_MAX_ITEMS: z.coerce.number().default(1000).transform((val) => Math.max(val, 1000)),
