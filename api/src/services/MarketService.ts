@@ -4,6 +4,7 @@ import { DomainError } from '../errors/DomainError.js';
 import { CharacterService } from './CharacterService.js';
 import { CooldownService } from './CooldownService.js';
 import { NotificationService } from './NotificationService.js';
+import { withBusinessSpan, userIdAttr, addEvent, setAttrs, setOutcome, recordError, activeSpan, reasonFromCode } from '../telemetry.js';
 
 export interface CreateOfferData {
   message?: string;
@@ -628,6 +629,12 @@ export class MarketService {
   }
 
   async createOffer(buyerId: string, listingId: string, data: CreateOfferData) {
+    return withBusinessSpan('market offer.create', { 'waifu.user.id': userIdAttr(buyerId) }, () =>
+      this.createOfferImpl(buyerId, listingId, data)
+    );
+  }
+
+  private async createOfferImpl(buyerId: string, listingId: string, data: CreateOfferData) {
     data = { ...data, offeredItems: this.sanitizeOfferedItems(data?.offeredItems) };
     const listing = await this.prisma.marketListing.findUnique({
       where: { id: listingId },
@@ -637,6 +644,8 @@ export class MarketService {
     if (!listing || listing.status !== ListingStatus.ACTIVE) {
       throw new DomainError('LISTING_NOT_ACTIVE', 'O anúncio não está mais disponível.');
     }
+
+    setAttrs({ 'waifu.seller.id': userIdAttr(listing.userId) });
 
     if (listing.userId === buyerId) {
       throw new DomainError('CANNOT_OFFER_OWN', 'Você não pode fazer oferta no seu próprio anúncio.');
@@ -916,6 +925,12 @@ export class MarketService {
    * Aceita uma oferta com validação em tempo real e transferência atômica multi-jogo
    */
   async acceptOffer(sellerId: string, offerId: string) {
+    return withBusinessSpan('market offer.accept', { 'waifu.user.id': userIdAttr(sellerId) }, () =>
+      this.acceptOfferTraced(sellerId, offerId)
+    );
+  }
+
+  private async acceptOfferTraced(sellerId: string, offerId: string) {
     try {
       return await this.acceptOfferLocked(sellerId, offerId);
     } finally {
@@ -946,6 +961,8 @@ export class MarketService {
       throw new DomainError('NOT_FOUND', 'Oferta não encontrada.');
     }
 
+    setAttrs({ 'waifu.buyer.id': userIdAttr(offer.buyerId) });
+
     if (offer.sellerId !== sellerId) {
       throw new DomainError('UNAUTHORIZED', 'Você não tem permissão para aceitar esta oferta.');
     }
@@ -964,6 +981,7 @@ export class MarketService {
       if (locked.count === 0) {
         throw new DomainError('OFFER_ALREADY_PROCESSED', 'Esta oferta já está sendo processada ou já foi respondida/cancelada.');
       }
+      addEvent('lock.acquired');
     }
 
     const listing = offer.listing;
@@ -1046,6 +1064,7 @@ export class MarketService {
             buyerNotifiedStatus: 'CANCELLED',
           },
         });
+        setOutcome('rejected', 'offered_waifus_missing');
         return {
           success: false,
           cancelled: true,
@@ -1064,6 +1083,7 @@ export class MarketService {
             buyerNotifiedStatus: 'CANCELLED',
           },
         });
+        setOutcome('rejected', 'mythic_offered');
         return {
           success: false,
           cancelled: true,
@@ -1164,6 +1184,7 @@ export class MarketService {
             buyerNotifiedStatus: 'CANCELLED',
           },
         });
+        setOutcome('rejected', 'insufficient_balance');
         return {
           success: false,
           cancelled: true,
@@ -1181,7 +1202,9 @@ export class MarketService {
     const farmItems = Array.isArray(offered.farmItems) ? offered.farmItems : [];
 
     const hasExternalItems = offeredRunas > 0 || offeredPetalitas > 0 || fishes.length > 0 || buffs.length > 0 || fishingBuffIds.length > 0 || farmItems.length > 0;
+    setAttrs({ 'waifu.market.external_items': hasExternalItems, 'waifu.market.compensated': false });
     if (hasExternalItems) {
+      addEvent('transfer.request');
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 12000);
@@ -1206,6 +1229,8 @@ export class MarketService {
 
         if (!transferRes.ok || !transferData || !transferData.success) {
           const reasonMsg = transferData?.reason || `Falha na transferência externa (HTTP ${transferRes.status})`;
+          addEvent('transfer.failed', { 'http.response.status_code': transferRes.status });
+          setOutcome('rejected', 'transfer_failed');
           await this.prisma.marketOffer.update({
             where: { id: offer.id },
             data: {
@@ -1223,6 +1248,8 @@ export class MarketService {
         }
       } catch (err: any) {
         const errMsg = err?.message || 'Falha na validação externa';
+        addEvent('transfer.failed', { 'error.type': err?.name || 'Error' });
+        setOutcome('rejected', 'transfer_error');
         await this.prisma.marketOffer.update({
           where: { id: offer.id },
           data: {
@@ -1313,6 +1340,7 @@ export class MarketService {
           }
           const sellerNetZinthos = Math.floor(offeredZinthos * 0.95);
           const spreadFee = offeredZinthos - sellerNetZinthos;
+          setAttrs({ 'waifu.market.zinthos': offeredZinthos, 'waifu.market.spread_fee': spreadFee });
 
           if (sellerNetZinthos > 0) {
             await tx.user.update({
@@ -1393,10 +1421,17 @@ export class MarketService {
       });
     } catch (pgTxErr: any) {
       console.error('[Market Transaction] Erro na transação PostgreSQL, iniciando compensação externa:', pgTxErr);
+      if (pgTxErr instanceof DomainError) {
+        addEvent('tx.rollback', { 'error.type': pgTxErr.code });
+        setOutcome('rejected', reasonFromCode(pgTxErr.code));
+      } else {
+        recordError(activeSpan(), pgTxErr);
+      }
 
       // Compensating Transaction: Devolve itens externos do vendedor de volta para o comprador
       let compensationOk = !hasExternalItems;
       if (hasExternalItems) {
+        addEvent('compensation.started');
         try {
           const compController = new AbortController();
           const compTimeout = setTimeout(() => compController.abort(), 12000);
@@ -1419,12 +1454,16 @@ export class MarketService {
           const rollbackData = (await rollbackRes.json().catch(() => ({}))) as any;
           if (rollbackRes.ok && rollbackData?.success) {
             compensationOk = true;
+            addEvent('compensation.ok');
+            setAttrs({ 'waifu.market.compensated': true });
             console.log(`[Market Compensation] Sucesso ao devolver itens externos para o comprador ${offer.buyerId}`);
           } else {
             console.error(`[Market Compensation] CRÍTICO: Falha ao devolver itens externos para ${offer.buyerId}:`, rollbackData);
+            addEvent('compensation.failed', { 'http.response.status_code': rollbackRes.status });
           }
         } catch (compErr: any) {
           console.error(`[Market Compensation] CRÍTICO: Exceção ao executar compensação externa para ${offer.buyerId}:`, compErr?.message);
+          addEvent('compensation.failed', { 'error.type': compErr?.name || 'Error' });
         }
       }
 
@@ -1461,6 +1500,8 @@ export class MarketService {
       }
 
       if (hasExternalItems && !compensationOk) {
+        // Estorno externo falhou: inconsistência que exige ação manual -> sempre ERROR.
+        recordError(activeSpan(), new Error('compensation failed'), 'compensation_failed');
         this.notificationService
           .notifyMarketEvent(
             offer.buyerId,
@@ -1480,6 +1521,8 @@ export class MarketService {
         }`,
       };
     }
+
+    addEvent('tx.commit');
 
     // 6. Atualiza cotas diárias de casamento e troca nos classificados
     if (this.cooldownService) {
@@ -1735,6 +1778,10 @@ export class MarketService {
    * Reverte manualmente uma oferta aceita nos classificados (Painel Administrativo)
    */
   async revertOffer(offerId: string) {
+    return withBusinessSpan('market offer.revert', {}, () => this.revertOfferImpl(offerId));
+  }
+
+  private async revertOfferImpl(offerId: string) {
     const offer = await this.prisma.marketOffer.findUnique({
       where: { id: offerId },
       include: {

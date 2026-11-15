@@ -123,3 +123,18 @@ waifuletes/
 ## ⚡ 8. Cachebuster Obrigatório para Frontend (CSS & JS)
 - **Sempre atualizar o Cachebuster nas páginas HTML:** Sempre que qualquer arquivo estático de frontend em `api/public/` (especialmente `css/retro-theme.css`, `js/user.js`, `js/api.js`, etc.) for alterado, é **obrigatório** atualizar o parâmetro de versão (`?v=YYYYMMDD-<topico>`) nas tags `<link rel="stylesheet">` e `<script src="...">` de todos os arquivos HTML que referenciam os arquivos modificados (`user.html`, `catalogo.html`, `character.html`, `admin.html`, `index.html`).
 - **Prevenção de Cache Stale:** Navegadores e proxies realizam cache agressivo de arquivos estáticos. Sem atualizar o cachebuster nos HTMLs, usuários e testadores continuarão carregando versões antigas em cache, resultando em falhas visuais ou comportamentos inconsistentes.
+
+---
+
+## 📡 9. Telemetria OpenTelemetry (OBRIGATÓRIA em todo PR)
+Todo serviço, rota ou fluxo novo (ou alterado) deve sair instrumentado. Referência: `OBSERVABILITY.md` deste repo e o da ravena-ai. Helpers em `api/src/telemetry.ts` (no-op com a telemetria desligada, sem precisar de `if`).
+- **Operação de negócio** (método público de service: roll, marry, mercado, sugestão, taxa…): envolva em `withBusinessSpan('<área> <operação>', { 'waifu.user.id': userIdAttr(userId), ... }, async (span) => ...)`. Ele já marca `app.outcome` e trata `DomainError` como rejeição.
+- **Etapas internas que podem ser lentas** (consulta pesada, fetch ao Hub/ravena/Jardim, CPU sobre o pool): `withSpan('<área> <etapa>', {}, () => ...)`. Transações Prisma: `withTxSpans`.
+- **Atributos de negócio:** `setAttrs({ 'waifu.<domínio>.<campo>': valor })` (valores, contagens, taxas, multiplicadores). Recusa esperada: `setOutcome('rejected', reasonFromCode(code))`. Recusa de negócio **não** é erro; exceção inesperada: `recordError(span, err)`.
+- **Rotas:** o `@fastify/otel` já cria o span SERVER, e o hook `preValidation` grava `userId`/`groupId` de params, corpo ou query. Rota nova só precisa de span de negócio se tiver lógica própria.
+- **Prisma e Redis** já são instrumentados (`$extends` e ioredis). Não use `@prisma/instrumentation` (derruba o processo com o SDK 2.x).
+- **IDs:** usuário só via `userIdAttr()` em `waifu.user.id` (ou `buyer`/`seller`); grupo via `chatIdAttr()` em `waifu.group.id`. **Nunca** no nome do span.
+- **Nunca** em span, atributo ou evento: nome/apelido, texto de sugestão ou motivo, prompt/resposta de LLM, chaves do Redis, tokens, segredos, headers.
+- **Nome de span:** baixa cardinalidade, sem IDs nem valores (vira dimensão de métrica).
+- **Documentação:** acrescente o span ou atributo novo na tabela de spans do `OBSERVABILITY.md`.
+- **Validar:** com `OTEL_EXPORTER_OTLP_ENDPOINT` ligado localmente, exercite a rota e confira o trace no Jaeger (`http://localhost:16686`).

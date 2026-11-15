@@ -11,6 +11,7 @@ import { TelegramNotificationService } from './TelegramNotificationService.js';
 import { NotificationService } from './NotificationService.js';
 import { RarityAdvisorService } from './RarityAdvisorService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
+import { withBusinessSpan, userIdAttr, setAttrs } from '../telemetry.js';
 
 export type SuggestionBlockDuration = '24h' | '7d' | '30d' | 'forever';
 
@@ -223,6 +224,12 @@ export class SuggestionService {
    * Envia uma sugestão de nova raridade para um personagem
    */
   async submitRaritySuggestion(userId: string, characterId: string, suggestedRarity: Rarity, reason: string) {
+    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'RARITY', 'waifu.user.id': userIdAttr(userId) }, () =>
+      this.submitRaritySuggestionImpl(userId, characterId, suggestedRarity, reason)
+    );
+  }
+
+  private async submitRaritySuggestionImpl(userId: string, characterId: string, suggestedRarity: Rarity, reason: string) {
     const character = await this.characterService.findCharacter(characterId);
     if (!character) {
       throw new DomainError('CHARACTER_NOT_FOUND', 'Personagem não encontrado.', 404);
@@ -337,6 +344,26 @@ export class SuggestionService {
    * Envia uma sugestão de foto (adicionar nova, excluir errada ou substituir por outra)
    */
   async submitImageSuggestion(
+    userId: string,
+    characterId: string,
+    imageBuffer?: Buffer | null,
+    reason?: string,
+    action: 'ADD' | 'DELETE' | 'REPLACE' = 'ADD',
+    targetPhoto?: string
+  ) {
+    return withBusinessSpan(
+      'suggestion submit',
+      {
+        'waifu.suggestion.type': 'IMAGE',
+        'waifu.suggestion.photo_action': action,
+        'waifu.upload.bytes': imageBuffer?.length,
+        'waifu.user.id': userIdAttr(userId),
+      },
+      () => this.submitImageSuggestionImpl(userId, characterId, imageBuffer, reason, action, targetPhoto)
+    );
+  }
+
+  private async submitImageSuggestionImpl(
     userId: string,
     characterId: string,
     imageBuffer?: Buffer | null,
@@ -460,6 +487,24 @@ export class SuggestionService {
    * Envia uma sugestão de edição de informações do personagem (nome, série, gênero, descrição, raridade, tags)
    */
   async submitEditSuggestion(
+    userId: string,
+    characterId: string,
+    data: {
+      suggestedName?: string;
+      suggestedSeries?: string;
+      suggestedGender?: Gender;
+      suggestedDescription?: string;
+      suggestedRarity?: Rarity;
+      suggestedTags?: string[];
+      reason: string;
+    }
+  ) {
+    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'EDIT', 'waifu.user.id': userIdAttr(userId) }, () =>
+      this.submitEditSuggestionImpl(userId, characterId, data)
+    );
+  }
+
+  private async submitEditSuggestionImpl(
     userId: string,
     characterId: string,
     data: {
@@ -625,6 +670,27 @@ export class SuggestionService {
       originCharacterId?: string;
     }
   ) {
+    return withBusinessSpan(
+      'suggestion submit',
+      { 'waifu.suggestion.type': 'NEW_CHARACTER', 'waifu.upload.bytes': data?.imageBuffer?.length, 'waifu.user.id': userIdAttr(userId) },
+      () => this.submitNewCharacterSuggestionImpl(userId, data)
+    );
+  }
+
+  private async submitNewCharacterSuggestionImpl(
+    userId: string,
+    data: {
+      name: string;
+      series: string;
+      rarity: Rarity;
+      gender?: Gender;
+      tags?: string[];
+      description?: string;
+      reason?: string;
+      imageBuffer?: Buffer;
+      originCharacterId?: string;
+    }
+  ) {
     if (!data.name || data.name.trim().length < 2) {
       throw new DomainError('INVALID_NAME', 'O nome do personagem deve conter ao menos 2 caracteres.', 400);
     }
@@ -732,6 +798,12 @@ export class SuggestionService {
    * Envia uma denúncia de exclusão para um personagem (botão 🔞 na home ou comando WhatsApp)
    */
   async submitDeleteSuggestion(characterId: string, userId?: string, reason?: string, explicitUserName?: string) {
+    return withBusinessSpan('suggestion submit', { 'waifu.suggestion.type': 'DELETE_CHARACTER', 'waifu.user.id': userIdAttr(userId) }, () =>
+      this.submitDeleteSuggestionImpl(characterId, userId, reason, explicitUserName)
+    );
+  }
+
+  private async submitDeleteSuggestionImpl(characterId: string, userId?: string, reason?: string, explicitUserName?: string) {
     const character = await this.characterService.findCharacter(characterId);
     if (!character) {
       throw new DomainError('CHARACTER_NOT_FOUND', 'Personagem não encontrado.', 404);
@@ -1164,6 +1236,17 @@ export class SuggestionService {
     overrideRarity?: string,
     overridePhotoAction?: 'ADD' | 'REPLACE'
   ) {
+    return withBusinessSpan('suggestion approve', {}, () =>
+      this.approveSuggestionImpl(suggestionId, reviewedBy, overrideRarity, overridePhotoAction)
+    );
+  }
+
+  private async approveSuggestionImpl(
+    suggestionId: string,
+    reviewedBy = 'admin',
+    overrideRarity?: string,
+    overridePhotoAction?: 'ADD' | 'REPLACE'
+  ) {
     const suggestion = await this.prisma.characterSuggestion.findUnique({
       where: { id: suggestionId },
       include: { character: true },
@@ -1173,6 +1256,7 @@ export class SuggestionService {
       throw new DomainError('SUGGESTION_NOT_FOUND', 'Sugestão não encontrada.', 404);
     }
 
+    setAttrs({ 'waifu.suggestion.type': suggestion.type });
     if (suggestion.status !== 'PENDING') {
       throw new DomainError('SUGGESTION_ALREADY_REVIEWED', `Esta sugestão já foi avaliada anteriormente (${suggestion.status}).`, 400);
     }
@@ -1501,6 +1585,12 @@ export class SuggestionService {
    * Aplica aprovações em lote para uma lista de IDs pendentes
    */
   private async approveSuggestionIds(ids: string[], reviewedBy = 'admin') {
+    return withBusinessSpan('suggestion approve.batch', { 'waifu.suggestion.batch_size': ids.length }, () =>
+      this.approveSuggestionIdsImpl(ids, reviewedBy)
+    );
+  }
+
+  private async approveSuggestionIdsImpl(ids: string[], reviewedBy = 'admin') {
     const results: any[] = [];
     for (const id of ids) {
       try {
@@ -1788,14 +1878,22 @@ export class SuggestionService {
    * Obtém o parecer da IA salvo para uma sugestão ou avalia sob demanda
    */
   async getOrEvaluateAiAdvisor(suggestionId: string, refresh = false) {
+    return withBusinessSpan('ai_advisor lookup', { 'waifu.ai.refresh': refresh }, () =>
+      this.getOrEvaluateAiAdvisorImpl(suggestionId, refresh)
+    );
+  }
+
+  private async getOrEvaluateAiAdvisorImpl(suggestionId: string, refresh = false) {
     if (!refresh && this.redis) {
       try {
         const cached = await this.redis.get(`suggestion:ai:${suggestionId}`);
         if (cached) {
+          setAttrs({ 'waifu.ai.cache': 'hit' });
           return JSON.parse(cached);
         }
       } catch (_) {}
     }
+    setAttrs({ 'waifu.ai.cache': 'miss' });
 
     const suggestion = await this.prisma.characterSuggestion.findUnique({
       where: { id: suggestionId },

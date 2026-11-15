@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
 import { calculateDivorceRefund, getDailyDivorceRate, calculateRankMultiplier } from '../utils/rarityCalculator.js';
 import { config } from '../config.js';
+import { withBusinessSpan, withSpan, userIdAttr, addEvent, setAttrs } from '../telemetry.js';
 import { MarketInvestmentService, BASE_MONEY_SUPPLY, INFLATION_ALPHA } from './MarketInvestmentService.js';
 import { rejectPendingOffersForListings } from './MarketService.js';
 
@@ -284,7 +285,7 @@ export class DivorceService {
 
     // Posição no rank da raridade e multiplicador correspondente (1x a 7x)
     const { position: rarityPosition, total: rarityTotal, multiplier: rankMultiplier } =
-      await this.getCharacterRarityRankAndTotal(character);
+      await withSpan('divorce rank.lookup', {}, () => this.getCharacterRarityRankAndTotal(character));
 
     // Soft Limite diário por raridade
     const previousDailyDivorces = await this.getDailyDivorceCount(userId, character.baseRarity);
@@ -329,6 +330,10 @@ export class DivorceService {
   }
 
   async divorce(userId: string, characterId: string) {
+    return withBusinessSpan('divorce', { 'waifu.user.id': userIdAttr(userId) }, () => this.divorceImpl(userId, characterId));
+  }
+
+  private async divorceImpl(userId: string, characterId: string) {
     // 1. Localizar o personagem (flexível)
     let haremEntry = await this.prisma.haremEntry.findFirst({
       where: {
@@ -374,7 +379,7 @@ export class DivorceService {
 
     // Posição no rank da raridade e multiplicador correspondente (1x a 7x)
     const { position: rarityPosition, total: rarityTotal, multiplier: rankMultiplier } =
-      await this.getCharacterRarityRankAndTotal(character);
+      await withSpan('divorce rank.lookup', {}, () => this.getCharacterRarityRankAndTotal(character));
 
     // 3. Consultar Soft Limite diário por raridade
     const previousDailyDivorces = await this.getDailyDivorceCount(userId, character.baseRarity);
@@ -388,6 +393,15 @@ export class DivorceService {
       inflationMultiplier,
       dailyDivorceRate: refundRate,
       rankMultiplier,
+    });
+    setAttrs({
+      'waifu.character.rarity': character.baseRarity,
+      'waifu.divorce.soulmate': isSoulmate,
+      'waifu.divorce.daily_number': currentDivorceNumber,
+      'waifu.divorce.soft_limit_applied': refundRate < 1.0,
+      'waifu.divorce.rank_multiplier': rankMultiplier,
+      'waifu.divorce.rarity_position': rarityPosition,
+      'waifu.divorce.rarity_total': rarityTotal,
     });
 
     // 5. Executar transação atômica
@@ -458,6 +472,8 @@ export class DivorceService {
 
       return updatedUser;
     });
+
+    addEvent('tx.commit', { 'waifu.market.cancelled_listings': cancelledListings });
 
     // 6. Incrementa contador no Redis
     await this.incrementDailyDivorceCount(userId, character.baseRarity).catch(() => {});

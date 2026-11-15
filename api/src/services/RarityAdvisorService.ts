@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import type { SuggestionNotifyData } from './TelegramNotificationService.js';
 import type { Redis } from 'ioredis';
+import { withBusinessSpan, setAttrs, setOutcome, recordError, activeSpan } from '../telemetry.js';
 
 export interface RarityAdvisorEvaluation {
   response: string;
@@ -95,6 +96,46 @@ export class RarityAdvisorService {
     if (!this.url || !this.model) {
       return null;
     }
+    // Span GenAI: só metadados (modelo, tokens, nº de chamadas). Prompt/resposta NUNCA.
+    const usage = { input: 0, output: 0, calls: 0, toolCalls: 0 };
+    return withBusinessSpan(
+      'ai_advisor',
+      {
+        'gen_ai.operation.name': 'chat',
+        'gen_ai.provider.name': 'vllm',
+        'gen_ai.request.model': this.model,
+        'waifu.suggestion.type': data.type,
+      },
+      async (span) => {
+        const evaluation = await this.evaluateRaritySuggestionImpl(data, usage, redis);
+        setAttrs(
+          {
+            'gen_ai.usage.input_tokens': usage.calls ? usage.input : undefined,
+            'gen_ai.usage.output_tokens': usage.calls ? usage.output : undefined,
+            'waifu.ai.llm_calls': usage.calls,
+            'waifu.ai.tool_calls': usage.toolCalls,
+          },
+          span
+        );
+        if (evaluation) setOutcome('ok', undefined, span);
+        else if (!(span as any).attributes?.['app.outcome']) setOutcome('rejected', 'empty_response', span);
+        return evaluation;
+      }
+    );
+  }
+
+  private trackUsage(usage: { input: number; output: number; calls: number }, body: any): void {
+    usage.calls += 1;
+    usage.input += Number(body?.usage?.prompt_tokens) || 0;
+    usage.output += Number(body?.usage?.completion_tokens) || 0;
+    if (body?.model) setAttrs({ 'gen_ai.response.model': String(body.model) });
+  }
+
+  private async evaluateRaritySuggestionImpl(
+    data: SuggestionNotifyData,
+    usage: { input: number; output: number; calls: number; toolCalls: number },
+    redis?: Redis
+  ): Promise<RarityAdvisorEvaluation | null> {
 
     const charName = data.character?.name || data.characterName || 'Desconhecido';
     const series = data.character?.series || data.series || 'Desconhecida';
@@ -220,10 +261,12 @@ Usuário é casado com o personagem?: ${isMarried ? 'SIM (Possível conflito de 
       if (!res1.ok) {
         const errText = await res1.text();
         console.warn(`[RarityAdvisor] vLLM retornou HTTP ${res1.status}: ${errText}`);
+        recordError(activeSpan(), new Error(`HTTP ${res1.status}`), `http_${res1.status}`);
         return null;
       }
 
       const data1 = (await res1.json()) as any;
+      this.trackUsage(usage, data1);
       const choice1 = data1.choices?.[0];
       if (!choice1?.message) {
         return null;
@@ -231,6 +274,7 @@ Usuário é casado com o personagem?: ${isMarried ? 'SIM (Possível conflito de 
 
       // Se o modelo invocou ferramentas de busca
       if (choice1.message.tool_calls && choice1.message.tool_calls.length > 0) {
+        usage.toolCalls += choice1.message.tool_calls.length;
         messages.push({
           role: 'assistant',
           content: choice1.message.content || null,
@@ -271,10 +315,12 @@ Usuário é casado com o personagem?: ${isMarried ? 'SIM (Possível conflito de 
         });
 
         if (!res2.ok) {
+          recordError(activeSpan(), new Error(`HTTP ${res2.status}`), `http_${res2.status}`);
           return null;
         }
 
         const data2 = (await res2.json()) as any;
+        this.trackUsage(usage, data2);
         const rawContent = data2.choices?.[0]?.message?.content?.trim() || null;
         const cleaned = rawContent ? this.cleanModelResponse(rawContent) : null;
         if (!cleaned) return null;
@@ -320,6 +366,7 @@ Usuário é casado com o personagem?: ${isMarried ? 'SIM (Possível conflito de 
       return evaluation;
     } catch (err: any) {
       console.error('[RarityAdvisor] Erro na análise de raridade por LLM:', err?.message || err);
+      recordError(activeSpan(), err);
       return null;
     }
   }
