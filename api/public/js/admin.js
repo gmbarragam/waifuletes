@@ -8,6 +8,14 @@ const RARITY_CONFIG = {
   LEGENDARY: { emoji: '⭐', label: 'Lendário', color: '#eab308' }
 };
 
+const RARITY_COLORS = {
+  COMMON: '#94a3b8',
+  UNCOMMON: '#22c55e',
+  RARE: '#3b82f6',
+  EPIC: '#a855f7',
+  LEGENDARY: '#eab308'
+};
+
 let adminToken = localStorage.getItem('waifu_admin_token') || '';
 let adminCropperInstance = null;
 let currentEditingCharacterId = null;
@@ -2356,8 +2364,9 @@ async function loadAdminInactivity() {
         ? '<span style="color: #16a34a; font-size: 11px;"><i class="fab fa-whatsapp"></i> WhatsApp</span>'
         : `<small style="font-size: 11px;">${escapeHtml(item.user?.platform || '')}</small>`;
 
-      const rarityColor = (RARITY_COLORS && RARITY_COLORS[item.character.rarity]) || '#94a3b8';
-      const rarityLabel = (RARITY_CONFIG && RARITY_CONFIG[item.character.rarity]?.label) || item.character.rarity;
+      const rCfg = RARITY_CONFIG[item.character.rarity] || RARITY_CONFIG.COMMON;
+      const rarityColor = rCfg?.color || '#94a3b8';
+      const rarityLabel = rCfg?.label || item.character.rarity;
 
       tr.innerHTML = `
         <td style="font-size: 12px; font-weight: 700;">${escapeHtml(dateStr)}</td>
@@ -2521,8 +2530,9 @@ async function loadUserAudit() {
       // Badge de Raridade do Personagem
       let charHtml = '<span style="color: #64748b;">—</span>';
       if (item.character) {
-        const rColor = (RARITY_COLORS && RARITY_COLORS[item.character.rarity]) || '#94a3b8';
-        const rLabel = (RARITY_CONFIG && RARITY_CONFIG[item.character.rarity]?.label) || item.character.rarity;
+        const rCfg = RARITY_CONFIG[item.character.rarity] || RARITY_CONFIG.COMMON;
+        const rColor = rCfg?.color || '#94a3b8';
+        const rLabel = rCfg?.label || item.character.rarity;
         charHtml = `
           <div style="font-weight: 800; font-size: 13px; color: #0f172a;">${escapeHtml(item.character.name)}</div>
           <div style="display: flex; align-items: center; gap: 6px; margin-top: 2px;">
