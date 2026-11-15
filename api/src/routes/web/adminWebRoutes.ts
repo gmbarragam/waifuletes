@@ -877,6 +877,436 @@ export const adminWebRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * Auditoria completa de atividades do usuário (casamentos, anúncios, ofertas, vendas, movimentações financeiras)
+   */
+  fastify.get('/api/admin/users/:userId/audit', {
+    preHandler: requireAdminAuth,
+    schema: {
+      description: 'Retorna a auditoria cronológica detalhada de atividades de um usuário (casamentos, anúncios, ofertas, vendas, transações)',
+      tags: ['Admin (Web)'],
+      params: {
+        type: 'object',
+        required: ['userId'],
+        additionalProperties: false,
+        properties: {
+          userId: { type: 'string' },
+        },
+      },
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          days: { type: 'integer', minimum: 1, maximum: 365, default: 30 },
+          type: {
+            type: 'string',
+            enum: ['ALL', 'MARRIAGES', 'LISTINGS', 'OFFERS_SENT', 'SALES', 'TRANSACTIONS'],
+            default: 'ALL',
+          },
+          page: { type: 'integer', minimum: 1, default: 1 },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 },
+          includeRollCrystals: { type: 'boolean', default: false },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { userId } = request.params as { userId: string };
+      const query = request.query as {
+        days?: number;
+        type?: 'ALL' | 'MARRIAGES' | 'LISTINGS' | 'OFFERS_SENT' | 'SALES' | 'TRANSACTIONS';
+        page?: number;
+        limit?: number;
+        includeRollCrystals?: boolean;
+      };
+
+      const days = Number(query.days) || 30;
+      const type = query.type || 'ALL';
+      const page = Math.max(1, Number(query.page) || 1);
+      const limit = Math.min(100, Math.max(1, Number(query.limit) || 30));
+      const skip = (page - 1) * limit;
+      const includeRollCrystals = Boolean(query.includeRollCrystals);
+
+      const user = await fastify.prisma.user.findFirst({
+        where: {
+          OR: [{ id: userId }, { publicId: userId }],
+        },
+        select: {
+          id: true,
+          publicId: true,
+          name: true,
+          platform: true,
+          kakera: true,
+          createdAt: true,
+        },
+      });
+
+      if (!user) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'USER_NOT_FOUND', message: 'Usuário não encontrado.' },
+        });
+      }
+
+      const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      // Resumo de métricas no período
+      const [
+        marriagesCount,
+        marriagesByRarityRaw,
+        listingsCount,
+        offersSentCount,
+        salesCount,
+        offersReceivedCount,
+      ] = await Promise.all([
+        fastify.prisma.haremEntry.count({
+          where: { userId: user.id, claimedAt: { gte: startDate } },
+        }),
+        fastify.prisma.haremEntry.findMany({
+          where: { userId: user.id, claimedAt: { gte: startDate } },
+          select: { character: { select: { baseRarity: true } } },
+        }),
+        fastify.prisma.marketListing.count({
+          where: { userId: user.id, createdAt: { gte: startDate } },
+        }),
+        fastify.prisma.marketOffer.count({
+          where: { buyerId: user.id, createdAt: { gte: startDate } },
+        }),
+        fastify.prisma.marketOffer.count({
+          where: { sellerId: user.id, status: 'ACCEPTED', createdAt: { gte: startDate } },
+        }),
+        fastify.prisma.marketOffer.count({
+          where: { sellerId: user.id, createdAt: { gte: startDate } },
+        }),
+      ]);
+
+      const rarityBreakdown: Record<string, number> = {
+        COMMON: 0,
+        UNCOMMON: 0,
+        RARE: 0,
+        EPIC: 0,
+        LEGENDARY: 0,
+      };
+      for (const m of marriagesByRarityRaw) {
+        const r = m.character?.baseRarity || 'COMMON';
+        rarityBreakdown[r] = (rarityBreakdown[r] || 0) + 1;
+      }
+
+      // Helper para formatar contrapartida de ofertas
+      const formatOfferedItems = (items: any) => {
+        if (!items) return 'Sem itens';
+        if (items.isFree) return '🎁 Gratuito / Doação';
+        const parts: string[] = [];
+        if (items.zinthos && items.zinthos > 0) {
+          parts.push(`🪙 ${Number(items.zinthos).toLocaleString('pt-BR')} Zinthos`);
+        }
+        if (items.runas && items.runas > 0) {
+          parts.push(`🔮 ${Number(items.runas).toLocaleString('pt-BR')} Runas`);
+        }
+        if (items.petalitas && items.petalitas > 0) {
+          parts.push(`🌸 ${Number(items.petalitas).toLocaleString('pt-BR')} Petalitas`);
+        }
+        if (Array.isArray(items.waifuIds) && items.waifuIds.length > 0) {
+          parts.push(`💍 ${items.waifuIds.length} Waifu(s)`);
+        }
+        if (Array.isArray(items.fishes) && items.fishes.length > 0) {
+          parts.push(`🐟 ${items.fishes.length} Peixe(s)`);
+        }
+        if (Array.isArray(items.farmItems) && items.farmItems.length > 0) {
+          parts.push(`🌾 ${items.farmItems.length} Fazenda`);
+        }
+        if (Array.isArray(items.fishingBuffs) && items.fishingBuffs.length > 0) {
+          parts.push(`🎣 ${items.fishingBuffs.length} Isca(s)`);
+        }
+        return parts.length > 0 ? parts.join(' + ') : 'Sem itens';
+      };
+
+      // Montagem dos eventos unificados ou filtrados por categoria
+      let allItems: any[] = [];
+      let totalCount = 0;
+
+      if (type === 'ALL' || type === 'MARRIAGES') {
+        const marriageOptions: any = {
+          where: { userId: user.id, claimedAt: { gte: startDate } },
+          include: {
+            character: {
+              select: { id: true, name: true, baseRarity: true, series: true },
+            },
+          },
+          orderBy: { claimedAt: 'desc' },
+        };
+        if (type === 'MARRIAGES') {
+          marriageOptions.skip = skip;
+          marriageOptions.take = limit;
+        }
+        const marriages = await fastify.prisma.haremEntry.findMany(marriageOptions);
+
+        const mapped = marriages.map((m: any) => ({
+          id: `marriage_${m.id}`,
+          timestamp: m.claimedAt.toISOString(),
+          category: 'MARRIAGE',
+          badge: { label: 'Casamento', color: '#ec4899', icon: 'fas fa-ring' },
+          character: {
+            id: m.character?.id,
+            name: m.character?.name || 'Desconhecido',
+            rarity: m.character?.baseRarity || 'COMMON',
+            series: m.character?.series,
+          },
+          currency: {
+            formatted: `${m.keys} chave(s)`,
+            amount: m.keys,
+          },
+          details: `Casou com ${m.character?.name || 'Desconhecido'} no grupo/origem ${m.claimedInGroup}`,
+          counterpart: { group: m.claimedInGroup },
+          status: 'COMPLETED',
+        }));
+
+        if (type === 'MARRIAGES') {
+          allItems = mapped;
+          totalCount = marriagesCount;
+        } else {
+          allItems.push(...mapped);
+        }
+      }
+
+      if (type === 'ALL' || type === 'LISTINGS') {
+        const listingOptions: any = {
+          where: { userId: user.id, createdAt: { gte: startDate } },
+          include: {
+            character: {
+              select: { id: true, name: true, baseRarity: true, series: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        };
+        if (type === 'LISTINGS') {
+          listingOptions.skip = skip;
+          listingOptions.take = limit;
+        }
+        const listings = await fastify.prisma.marketListing.findMany(listingOptions);
+
+        const mapped = listings.map((l: any) => ({
+          id: `listing_${l.id}`,
+          timestamp: l.createdAt.toISOString(),
+          category: 'LISTING',
+          badge: { label: 'Anúncio', color: '#f59e0b', icon: 'fas fa-bullhorn' },
+          character: {
+            id: l.character?.id,
+            name: l.character?.name || 'Desconhecido',
+            rarity: l.character?.baseRarity || 'COMMON',
+            series: l.character?.series,
+          },
+          currency: {
+            formatted: `Buscando: ${l.interest}`,
+          },
+          details: `Criou anúncio nos classificados buscando "${l.interest}"`,
+          status: l.status,
+        }));
+
+        if (type === 'LISTINGS') {
+          allItems = mapped;
+          totalCount = listingsCount;
+        } else {
+          allItems.push(...mapped);
+        }
+      }
+
+      if (type === 'ALL' || type === 'OFFERS_SENT') {
+        const offerSentOptions: any = {
+          where: { buyerId: user.id, createdAt: { gte: startDate } },
+          include: {
+            seller: { select: { id: true, name: true } },
+            listing: {
+              include: {
+                character: { select: { id: true, name: true, baseRarity: true, series: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        };
+        if (type === 'OFFERS_SENT') {
+          offerSentOptions.skip = skip;
+          offerSentOptions.take = limit;
+        }
+        const offersSent = await fastify.prisma.marketOffer.findMany(offerSentOptions);
+
+        const mapped = offersSent.map((o: any) => ({
+          id: `offer_sent_${o.id}`,
+          timestamp: o.createdAt.toISOString(),
+          category: 'OFFER_SENT',
+          badge: { label: 'Oferta Enviada', color: '#3b82f6', icon: 'fas fa-paper-plane' },
+          character: {
+            id: o.listing?.character?.id,
+            name: o.listing?.character?.name || 'Desconhecido',
+            rarity: o.listing?.character?.baseRarity || 'COMMON',
+            series: o.listing?.character?.series,
+          },
+          currency: {
+            formatted: formatOfferedItems(o.offeredItems),
+            rawItems: o.offeredItems,
+          },
+          details: `Enviou proposta para ${o.seller?.name || 'Vendedor'}: ${formatOfferedItems(o.offeredItems)}`,
+          counterpart: { name: o.seller?.name, role: 'Vendedor' },
+          status: o.status,
+        }));
+
+        if (type === 'OFFERS_SENT') {
+          allItems = mapped;
+          totalCount = offersSentCount;
+        } else {
+          allItems.push(...mapped);
+        }
+      }
+
+      if (type === 'ALL' || type === 'SALES') {
+        const offerReceivedOptions: any = {
+          where: {
+            sellerId: user.id,
+            createdAt: { gte: startDate },
+            ...(type === 'SALES' ? { status: 'ACCEPTED' } : {}),
+          },
+          include: {
+            buyer: { select: { id: true, name: true } },
+            listing: {
+              include: {
+                character: { select: { id: true, name: true, baseRarity: true, series: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        };
+        if (type === 'SALES') {
+          offerReceivedOptions.skip = skip;
+          offerReceivedOptions.take = limit;
+        }
+        const offersReceived = await fastify.prisma.marketOffer.findMany(offerReceivedOptions);
+
+        const mapped = offersReceived.map((o: any) => {
+          const isSale = o.status === 'ACCEPTED';
+          return {
+            id: `offer_rec_${o.id}`,
+            timestamp: o.createdAt.toISOString(),
+            category: isSale ? 'SALE' : 'OFFER_RECEIVED',
+            badge: isSale
+              ? { label: 'Venda Concluída', color: '#10b981', icon: 'fas fa-coins' }
+              : { label: 'Oferta Recebida', color: '#6366f1', icon: 'fas fa-inbox' },
+            character: {
+              id: o.listing?.character?.id,
+              name: o.listing?.character?.name || 'Desconhecido',
+              rarity: o.listing?.character?.baseRarity || 'COMMON',
+              series: o.listing?.character?.series,
+            },
+            currency: {
+              formatted: formatOfferedItems(o.offeredItems),
+              rawItems: o.offeredItems,
+            },
+            details: isSale
+              ? `Venda concluída para ${o.buyer?.name || 'Comprador'}: recebeu ${formatOfferedItems(o.offeredItems)}`
+              : `Recebeu oferta de ${o.buyer?.name || 'Comprador'}: ${formatOfferedItems(o.offeredItems)}`,
+            counterpart: { name: o.buyer?.name, role: 'Comprador' },
+            status: o.status,
+          };
+        });
+
+        if (type === 'SALES') {
+          allItems = mapped;
+          totalCount = salesCount;
+        } else {
+          allItems.push(...mapped);
+        }
+      }
+
+      if (type === 'ALL' || type === 'TRANSACTIONS') {
+        const txWhere: any = {
+          userId: user.id,
+          createdAt: { gte: startDate },
+        };
+        if (!includeRollCrystals && type === 'ALL') {
+          txWhere.reason = { not: 'ROLL_CRYSTAL' };
+        }
+
+        const txCount = await fastify.prisma.kakeraTransaction.count({ where: txWhere });
+        const txFindOptions: any = {
+          where: txWhere,
+          orderBy: { createdAt: 'desc' },
+        };
+        if (type === 'TRANSACTIONS') {
+          txFindOptions.skip = skip;
+          txFindOptions.take = limit;
+        } else {
+          txFindOptions.take = 100;
+        }
+        const transactions = await fastify.prisma.kakeraTransaction.findMany(txFindOptions);
+
+        const mapped = transactions.map((t) => {
+          const meta = t.metadata as any;
+          const charName = meta?.characterName || meta?.characterId;
+          const sign = t.amount >= 0 ? '+' : '';
+          return {
+            id: `tx_${t.id}`,
+            timestamp: t.createdAt.toISOString(),
+            category: 'TRANSACTION',
+            badge: {
+              label: t.reason,
+              color: t.amount >= 0 ? '#10b981' : '#ef4444',
+              icon: 'fas fa-receipt',
+            },
+            character: charName ? { name: charName, rarity: meta?.rarity || 'UNKNOWN' } : undefined,
+            currency: {
+              formatted: `${sign}${Number(t.amount).toLocaleString('pt-BR')} 🪙 Zinthos`,
+              amount: t.amount,
+            },
+            details: `Transação: ${t.reason} (${sign}${Number(t.amount).toLocaleString('pt-BR')} Zinthos)${meta?.shares ? ` - Cotas: ${meta.shares}` : ''}${meta?.type ? ` [${meta.type}]` : ''}`,
+            status: 'COMPLETED',
+          };
+        });
+
+        if (type === 'TRANSACTIONS') {
+          allItems = mapped;
+          totalCount = txCount;
+        } else {
+          allItems.push(...mapped);
+        }
+      }
+
+      // Ordenar e paginar quando type === 'ALL'
+      let paginatedItems = allItems;
+      if (type === 'ALL') {
+        allItems.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        totalCount = allItems.length;
+        paginatedItems = allItems.slice(skip, skip + limit);
+      }
+
+      return reply.send({
+        success: true,
+        data: {
+          user: {
+            id: user.id,
+            publicId: user.publicId,
+            name: user.name,
+            platform: user.platform,
+            kakera: user.kakera,
+          },
+          summary: {
+            days,
+            marriagesCount,
+            marriagesByRarity: rarityBreakdown,
+            listingsCount,
+            offersSentCount,
+            salesCount,
+            offersReceivedCount,
+          },
+          items: paginatedItems,
+          pagination: {
+            page,
+            limit,
+            total: totalCount,
+            totalPages: Math.ceil(totalCount / limit) || 1,
+          },
+        },
+      });
+    },
+  });
+
+  /**
    * Gerar sessão de impersonation do usuário (como se tivesse usado !mu-adm)
    */
   fastify.post('/api/admin/users/:userId/session', {

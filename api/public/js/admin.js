@@ -286,6 +286,61 @@ function setupAdminEvents() {
     });
   }
 
+  // Controles do Modal de Auditoria de Usuário
+  const auditFilterDays = document.getElementById('audit-filter-days');
+  if (auditFilterDays) {
+    auditFilterDays.addEventListener('change', () => {
+      auditState.days = Number(auditFilterDays.value) || 30;
+      auditState.page = 1;
+      loadUserAudit();
+    });
+  }
+
+  const auditFilterType = document.getElementById('audit-filter-type');
+  if (auditFilterType) {
+    auditFilterType.addEventListener('change', () => {
+      auditState.type = auditFilterType.value || 'ALL';
+      auditState.page = 1;
+      loadUserAudit();
+    });
+  }
+
+  const auditFilterRollCrystals = document.getElementById('audit-filter-roll-crystals');
+  if (auditFilterRollCrystals) {
+    auditFilterRollCrystals.addEventListener('change', () => {
+      auditState.includeRollCrystals = Boolean(auditFilterRollCrystals.checked);
+      auditState.page = 1;
+      loadUserAudit();
+    });
+  }
+
+  const btnRefreshAudit = document.getElementById('btn-refresh-audit');
+  if (btnRefreshAudit) {
+    btnRefreshAudit.addEventListener('click', () => {
+      loadUserAudit();
+    });
+  }
+
+  const auditBtnPrev = document.getElementById('audit-btn-prev');
+  if (auditBtnPrev) {
+    auditBtnPrev.addEventListener('click', () => {
+      if (auditState.page > 1) {
+        auditState.page--;
+        loadUserAudit();
+      }
+    });
+  }
+
+  const auditBtnNext = document.getElementById('audit-btn-next');
+  if (auditBtnNext) {
+    auditBtnNext.addEventListener('click', () => {
+      if (auditState.page < auditState.totalPages) {
+        auditState.page++;
+        loadUserAudit();
+      }
+    });
+  }
+
   // Busca de negociações
   let tradesSearchTimer = null;
   const adminTradesSearchInput = document.getElementById('admin-trades-search-input');
@@ -1642,7 +1697,7 @@ async function loadAdminUsers() {
         </td>
         <td style="text-align: center;" id="zinthos-cell-${domKey}"></td>
         <td style="text-align: center;">
-          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; min-width: 250px; max-width: 320px; margin: 0 auto;">
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; min-width: 330px; max-width: 420px; margin: 0 auto;">
             <button class="btn-retro btn-sm" data-action="impersonate" title="Acessar painel web deste usuário">
               <i class="fas fa-external-link-alt"></i> Painel
             </button>
@@ -1658,12 +1713,15 @@ async function loadAdminUsers() {
             <button class="btn-retro btn-sm" style="background: #8b5cf6; color: #fff; font-weight: 800; border-color: #7c3aed;" data-action="mythic-slots" title="Conceder slots de personagens míticos para este usuário (Atual: ${Number(u.mythicSlots || 0)} slots)">
               🔮 +Myt
             </button>
+            <button class="btn-retro btn-sm" style="background: #0284c7; color: #fff; font-weight: 800; border-color: #0369a1;" data-action="audit" title="Auditoria de atividades (casamentos, anúncios, ofertas e vendas)">
+              <i class="fas fa-clipboard-list"></i> Auditoria
+            </button>
             ${u.isBlockedFromSuggestions ? `
-              <button class="btn-retro btn-sm" style="background: #16a34a; color: #fff; font-weight: 700;" data-action="unblock-suggestions" title="Usuário bloqueado de enviar sugestões. Clique para desbloquear.">
+              <button class="btn-retro btn-sm" style="background: #16a34a; color: #fff; font-weight: 700; grid-column: span 2;" data-action="unblock-suggestions" title="Usuário bloqueado de enviar sugestões. Clique para desbloquear.">
                 <i class="fas fa-unlock"></i> Desbloq.
               </button>
             ` : `
-              <button class="btn-retro btn-sm" style="background: #fee2e2; border-color: #ef4444; color: #dc2626; font-weight: 700;" data-action="block-suggestions" title="Bloquear envio de sugestões">
+              <button class="btn-retro btn-sm" style="background: #fee2e2; border-color: #ef4444; color: #dc2626; font-weight: 700; grid-column: span 2;" data-action="block-suggestions" title="Bloquear envio de sugestões">
                 <i class="fas fa-ban"></i> Bloquear
               </button>
             `}
@@ -1678,6 +1736,7 @@ async function loadAdminUsers() {
         'reset-rolls': () => adminResetRolls(u.id, u.name),
         'reset-claim-cooldowns': () => adminResetClaimCooldowns(u.id, u.name),
         'mythic-slots': () => openAdminMythicSlotsModal(u.id, u.name, Number(u.mythicSlots || 0)),
+        'audit': () => openUserAuditModal(u.id, u.name),
         'unblock-suggestions': () => unblockUserSuggestions(u.id),
         'block-suggestions': () => openBlockSuggestionsModal(u.id, u.name),
       };
@@ -2329,6 +2388,201 @@ async function loadAdminInactivity() {
     });
   } catch (err) {
     tbody.innerHTML = '<tr style="color: red;"><td colspan="7" style="text-align: center; padding: 24px;">Falha de comunicação ao carregar registros de inatividade.</td></tr>';
+  }
+}
+
+// ========================================================
+// AUDITORIA COMPLETA DE USUÁRIO
+// ========================================================
+const auditState = {
+  userId: '',
+  userName: '',
+  page: 1,
+  limit: 30,
+  days: 30,
+  type: 'ALL',
+  includeRollCrystals: false,
+  total: 0,
+  totalPages: 1,
+};
+
+function openUserAuditModal(userId, userName) {
+  auditState.userId = userId;
+  auditState.userName = userName;
+  auditState.page = 1;
+  auditState.days = Number(document.getElementById('audit-filter-days')?.value) || 30;
+  auditState.type = document.getElementById('audit-filter-type')?.value || 'ALL';
+  auditState.includeRollCrystals = Boolean(document.getElementById('audit-filter-roll-crystals')?.checked);
+
+  const titleEl = document.getElementById('audit-modal-title');
+  if (titleEl) {
+    const cleanNumber = (userId || '').replace('@s.whatsapp.net', '').replace('@c.us', '');
+    titleEl.innerHTML = `
+      <i class="fas fa-clipboard-list" style="color: #0284c7;"></i>
+      <span>Auditoria de Atividades — <strong>${escapeHtml(userName)}</strong> <code>(${escapeHtml(cleanNumber)})</code></span>
+    `;
+  }
+
+  openModal('modal-user-audit');
+  loadUserAudit();
+}
+
+async function loadUserAudit() {
+  const tbody = document.getElementById('audit-table-tbody');
+  const cardsContainer = document.getElementById('audit-stats-cards');
+  const totalCountEl = document.getElementById('audit-total-records-count');
+  const pageIndicatorEl = document.getElementById('audit-page-indicator');
+  const btnPrev = document.getElementById('audit-btn-prev');
+  const btnNext = document.getElementById('audit-btn-next');
+
+  if (!tbody || !auditState.userId) return;
+
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 30px; color: #64748b;"><i class="fas fa-spinner fa-spin"></i> Carregando auditoria detalhada...</td></tr>';
+
+  try {
+    const params = new URLSearchParams({
+      days: auditState.days,
+      type: auditState.type,
+      page: auditState.page,
+      limit: auditState.limit,
+      includeRollCrystals: String(auditState.includeRollCrystals),
+    });
+
+    const res = await Api.get(`/api/admin/users/${encodeURIComponent(auditState.userId)}/audit?${params.toString()}`, {
+      Authorization: `Bearer ${adminToken}`,
+    });
+
+    if (!res.success) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 30px; color: red;">${escapeHtml(res.error?.message || 'Erro ao carregar auditoria.')}</td></tr>`;
+      return;
+    }
+
+    const { summary, items, pagination, user } = res.data;
+    auditState.total = pagination.total;
+    auditState.totalPages = pagination.totalPages;
+
+    if (totalCountEl) totalCountEl.textContent = `${pagination.total.toLocaleString('pt-BR')} registros`;
+    if (pageIndicatorEl) pageIndicatorEl.textContent = `${pagination.page} / ${pagination.totalPages}`;
+    if (btnPrev) btnPrev.disabled = pagination.page <= 1;
+    if (btnNext) btnNext.disabled = pagination.page >= pagination.totalPages;
+
+    // Render Stats Cards
+    if (cardsContainer) {
+      const mb = summary.marriagesByRarity || {};
+      cardsContainer.innerHTML = `
+        <div style="background: #fdf2f8; border: 2px solid #fbcfe8; border-radius: 6px; padding: 8px 12px;">
+          <div style="font-size: 11px; font-weight: 700; color: #db2777; text-transform: uppercase;">💍 Casamentos (${summary.days}d)</div>
+          <div style="font-size: 20px; font-weight: 900; color: #9d174d;">${Number(summary.marriagesCount || 0).toLocaleString('pt-BR')}</div>
+          <div style="font-size: 11px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
+            <span style="color: #b45309; font-weight: 800;" title="Lendárias">🟡 ${mb.LEGENDARY || 0}</span>
+            <span style="color: #7e22ce; font-weight: 800;" title="Épicas">🟣 ${mb.EPIC || 0}</span>
+            <span style="color: #1d4ed8; font-weight: 800;" title="Raras">🔵 ${mb.RARE || 0}</span>
+            <span style="color: #15803d; font-weight: 800;" title="Incomuns">🟢 ${mb.UNCOMMON || 0}</span>
+            <span style="color: #475569; font-weight: 800;" title="Comuns">⚪ ${mb.COMMON || 0}</span>
+          </div>
+        </div>
+
+        <div style="background: #fefce8; border: 2px solid #fef08a; border-radius: 6px; padding: 8px 12px;">
+          <div style="font-size: 11px; font-weight: 700; color: #b45309; text-transform: uppercase;">📢 Anúncios Criados</div>
+          <div style="font-size: 20px; font-weight: 900; color: #854d0e;">${Number(summary.listingsCount || 0).toLocaleString('pt-BR')}</div>
+          <div style="font-size: 11px; color: #a16207; margin-top: 4px;">Classificados no período</div>
+        </div>
+
+        <div style="background: #eff6ff; border: 2px solid #bfdbfe; border-radius: 6px; padding: 8px 12px;">
+          <div style="font-size: 11px; font-weight: 700; color: #1d4ed8; text-transform: uppercase;">🤝 Ofertas Enviadas</div>
+          <div style="font-size: 20px; font-weight: 900; color: #1e40af;">${Number(summary.offersSentCount || 0).toLocaleString('pt-BR')}</div>
+          <div style="font-size: 11px; color: #2563eb; margin-top: 4px;">Propostas como comprador</div>
+        </div>
+
+        <div style="background: #ecfdf5; border: 2px solid #a7f3d0; border-radius: 6px; padding: 8px 12px;">
+          <div style="font-size: 11px; font-weight: 700; color: #047857; text-transform: uppercase;">💰 Vendas Concluídas</div>
+          <div style="font-size: 20px; font-weight: 900; color: #065f46;">${Number(summary.salesCount || 0).toLocaleString('pt-BR')}</div>
+          <div style="font-size: 11px; color: #059669; margin-top: 4px;">De ${Number(summary.offersReceivedCount || 0)} ofertas recebidas</div>
+        </div>
+
+        <div style="background: #f8fafc; border: 2px solid #cbd5e1; border-radius: 6px; padding: 8px 12px;">
+          <div style="font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase;">🪙 Saldo Atual</div>
+          <div style="font-size: 20px; font-weight: 900; color: #0f172a;">${Number(user?.kakera || 0).toLocaleString('pt-BR')}</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Zinthos em carteira</div>
+        </div>
+      `;
+    }
+
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 30px; color: #64748b;">Nenhuma atividade registrada para este usuário com os filtros selecionados.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = '';
+    items.forEach((item) => {
+      const tr = document.createElement('tr');
+      const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleString('pt-BR') : '-';
+
+      // Badge de Raridade do Personagem
+      let charHtml = '<span style="color: #64748b;">—</span>';
+      if (item.character) {
+        const rColor = (RARITY_COLORS && RARITY_COLORS[item.character.rarity]) || '#94a3b8';
+        const rLabel = (RARITY_CONFIG && RARITY_CONFIG[item.character.rarity]?.label) || item.character.rarity;
+        charHtml = `
+          <div style="font-weight: 800; font-size: 13px; color: #0f172a;">${escapeHtml(item.character.name)}</div>
+          <div style="display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+            <span class="badge-tag" style="background: ${rColor}; color: #000; font-weight: 800; font-size: 10px; padding: 1px 5px;">
+              ${escapeHtml(rLabel)}
+            </span>
+            ${item.character.series ? `<small style="font-size: 11px; color: #64748b;">${escapeHtml(item.character.series)}</small>` : ''}
+          </div>
+        `;
+      }
+
+      // Badge da Ação
+      const actionBadge = `
+        <span class="badge-rarity" style="position: static; border-color: ${item.badge.color}; color: ${item.badge.color}; font-weight: 800; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px;">
+          <i class="${item.badge.icon}"></i> ${escapeHtml(item.badge.label)}
+        </span>
+        ${item.status && item.status !== 'COMPLETED' ? `
+          <div style="font-size: 10px; font-weight: 700; color: ${item.status === 'ACCEPTED' ? '#16a34a' : item.status === 'REJECTED' ? '#dc2626' : item.status === 'PENDING' ? '#d97706' : '#64748b'}; margin-top: 3px;">
+            Status: ${escapeHtml(item.status)}
+          </div>
+        ` : ''}
+      `;
+
+      // Formatação de Valores / Moeda
+      let currencyHtml = '<span style="color: #64748b;">—</span>';
+      if (item.currency && item.currency.formatted) {
+        currencyHtml = `<div style="font-weight: 700; font-size: 12px; color: #0f172a;">${escapeHtml(item.currency.formatted)}</div>`;
+      }
+
+      // Detalhes / Origem / Contraparte
+      let detailsHtml = `<div style="font-size: 12px; color: #334155;">${escapeHtml(item.details)}</div>`;
+      if (item.counterpart) {
+        if (item.counterpart.group) {
+          const isWhatsAppGroup = item.counterpart.group.endsWith('@g.us');
+          detailsHtml += `
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+              ${isWhatsAppGroup ? `<i class="fab fa-whatsapp" style="color: #16a34a;"></i> Grupo: <code>${escapeHtml(item.counterpart.group.split('@')[0])}</code>` : `Origem: <strong>${escapeHtml(item.counterpart.group)}</strong>`}
+            </div>
+          `;
+        } else if (item.counterpart.name) {
+          detailsHtml += `
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+              ${escapeHtml(item.counterpart.role || 'Contraparte')}: <strong>${escapeHtml(item.counterpart.name)}</strong>
+            </div>
+          `;
+        }
+      }
+
+      tr.innerHTML = `
+        <td style="font-size: 12px; font-weight: 700; white-space: nowrap;">${escapeHtml(dateStr)}</td>
+        <td style="text-align: center;">${actionBadge}</td>
+        <td>${charHtml}</td>
+        <td>${currencyHtml}</td>
+        <td>${detailsHtml}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    console.error('Erro ao carregar auditoria:', err);
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 30px; color: red;">Erro de comunicação ao carregar auditoria.</td></tr>';
   }
 }
 

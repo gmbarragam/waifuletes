@@ -230,6 +230,7 @@ async function start(): Promise<void> {
     import('@opentelemetry/instrumentation-ioredis'),
     import('@opentelemetry/instrumentation-pino'),
     import('@opentelemetry/instrumentation-runtime-node'),
+    // @ts-ignore
     import('@fastify/otel'),
     import('node:fs'),
     import('./telemetryUrl.js'),
