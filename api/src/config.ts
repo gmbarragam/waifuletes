@@ -53,6 +53,19 @@ const envSchema = z.object({
 
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.preprocess(
+    (val) => (typeof val === 'string' && val.trim() !== '' ? val.trim() : undefined),
+    z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{1,256}$/, {
+        message: 'TELEGRAM_WEBHOOK_SECRET deve conter de 1 a 256 caracteres [A-Za-z0-9_-]',
+      })
+      .optional()
+  ),
+  TELEGRAM_WEBHOOK_ALLOW_UNSIGNED: z.preprocess(
+    (val) => val === 'true' || val === true,
+    z.boolean()
+  ).default(false),
 
   HYPERION_LLM_URL: z.string().default(process.env.HYPERION_LLM_URL || 'http://192.168.195.212:16001/v1'),
   // Sem valor padrão: segredos nunca ficam no código. Configure HYPERION_LLM_KEY no .env.

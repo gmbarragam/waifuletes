@@ -14,6 +14,21 @@ export const telegramRoutes: FastifyPluginAsync = async (fastify) => {
       tags: ['Telegram'],
     },
     handler: async (request, reply) => {
+      const rawHeader = request.headers['x-telegram-bot-api-secret-token'];
+      const secretHeader = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+
+      if (!telegramService.validateWebhookSecret(secretHeader)) {
+        request.log.warn(
+          { ip: request.ip, hasHeader: Boolean(secretHeader) },
+          'Tentativa não autorizada no webhook do Telegram: secret_token ausente ou inválido'
+        );
+        return reply.status(401).send({
+          statusCode: 401,
+          error: 'Unauthorized',
+          message: 'Webhook secret token inválido ou ausente.',
+        });
+      }
+
       const update = request.body as any;
 
       if (update?.callback_query) {

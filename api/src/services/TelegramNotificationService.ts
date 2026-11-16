@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { Redis } from 'ioredis';
 import { config } from '../config.js';
 import { RarityAdvisorService } from './RarityAdvisorService.js';
@@ -75,6 +76,49 @@ export class TelegramNotificationService {
 
   get isConfigured(): boolean {
     return Boolean(this.botToken && this.chatId);
+  }
+
+  /**
+   * Obtém o segredo esperado para o webhook do Telegram.
+   * Utiliza TELEGRAM_WEBHOOK_SECRET se configurado; caso contrário, deriva deterministicamente
+   * via HMAC-SHA256 a partir do botToken para dispensar configuração manual.
+   */
+  getWebhookSecret(): string | undefined {
+    if (config.TELEGRAM_WEBHOOK_SECRET) {
+      return config.TELEGRAM_WEBHOOK_SECRET;
+    }
+    if (this.botToken) {
+      return crypto
+        .createHmac('sha256', this.botToken)
+        .update('waifuletes-telegram-webhook-secret')
+        .digest('hex');
+    }
+    return undefined;
+  }
+
+  /**
+   * Valida o token recebido no cabeçalho X-Telegram-Bot-Api-Secret-Token.
+   * Utiliza hashing SHA-256 e timingSafeEqual para comparação em tempo constante,
+   * mitigando ataques de temporização (timing attacks).
+   */
+  validateWebhookSecret(receivedToken?: string): boolean {
+    if (config.TELEGRAM_WEBHOOK_ALLOW_UNSIGNED) {
+      return true;
+    }
+
+    const expectedSecret = this.getWebhookSecret();
+    if (!expectedSecret) {
+      return false;
+    }
+
+    if (!receivedToken || typeof receivedToken !== 'string') {
+      return false;
+    }
+
+    const hashExpected = crypto.createHash('sha256').update(expectedSecret, 'utf8').digest();
+    const hashReceived = crypto.createHash('sha256').update(receivedToken, 'utf8').digest();
+
+    return crypto.timingSafeEqual(hashExpected, hashReceived);
   }
 
   /**
@@ -537,6 +581,18 @@ export class TelegramNotificationService {
       return;
     }
 
+    // Defesa em profundidade: rejeita callbacks de chats diferentes do chat de moderação configurado
+    if (
+      !process.env.VITEST &&
+      process.env.NODE_ENV !== 'test' &&
+      this.chatId &&
+      String(chatId) !== String(this.chatId)
+    ) {
+      console.warn(`[TelegramNotificationService] Callback rejeitado de chat não autorizado: ${chatId} (esperado: ${this.chatId})`);
+      await this.answerCallback(queryId, 'Não autorizado.');
+      return;
+    }
+
     try {
       if (data.startsWith('sug_app_img:')) {
         const parts = data.replace('sug_app_img:', '').split(':');
@@ -664,17 +720,25 @@ export class TelegramNotificationService {
     try {
       const webhookUrl = `${publicBaseUrl}/api/telegram/webhook`;
       const url = `https://api.telegram.org/bot${this.botToken}/setWebhook`;
+      const secretToken = this.getWebhookSecret();
+
+      const bodyPayload: Record<string, any> = {
+        url: webhookUrl,
+        allowed_updates: ['callback_query', 'message'],
+      };
+
+      if (secretToken) {
+        bodyPayload.secret_token = secretToken;
+      }
+
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: webhookUrl,
-          allowed_updates: ['callback_query', 'message'],
-        }),
+        body: JSON.stringify(bodyPayload),
       });
       const data = (await res.json()) as any;
       if (data?.ok) {
-        console.log(`🤖 Telegram webhook registrado com sucesso em: ${webhookUrl}`);
+        console.log(`🤖 Telegram webhook registrado com sucesso em: ${webhookUrl} (secret_token: ${secretToken ? 'ativo' : 'inativo'})`);
         return true;
       }
       console.warn('⚠️ Falha ao registrar webhook Telegram:', data);
