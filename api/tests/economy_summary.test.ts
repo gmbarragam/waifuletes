@@ -158,6 +158,7 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       ['to igual a from', `?from=${FLOW_BASE}&to=${FLOW_BASE}`],
       ['to menor que from', `?from=${FLOW_BASE}&to=${FLOW_BASE - 1}`],
       ['to além de agora + 60s', `?from=0&to=${now + 5 * 60_000}`],
+      ['received inválido', `?from=${FLOW_BASE}&to=${FLOW_BASE + HOUR}&received=2`],
     ])('%s', async (_label, qs) => {
       const res = await get(`/internal/economy/summary${qs}`);
       expect(res.statusCode).toBe(400);
@@ -272,7 +273,7 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
 
   describe('entradas por quinto', () => {
     it('soma e mediana só de motivos de criação, na janela, por faixa de saldo atual', async () => {
-      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}`);
+      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}&received=1`);
       expect(res.json().receivedByQuintile).toEqual([
         { q: 1, n: 10, receivedSum: 550, receivedMedian: 50 },
         { q: 2, n: 10, receivedSum: 20, receivedMedian: 0 },
@@ -282,18 +283,27 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       ]);
     });
 
+    it('é opt-in: sem received=1 (ou com received=0) vem [] mesmo em janela curta', async () => {
+      for (const qs of ['', '&received=0']) {
+        const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}${qs}`);
+        expect(res.statusCode).toBe(200);
+        expect(res.json().receivedByQuintile).toEqual([]);
+        expect(res.json().balances.quintiles).toHaveLength(5);
+      }
+    });
+
     it('janela de exatamente 8 dias ainda é calculada', async () => {
-      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 8 * DAY}`);
+      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 8 * DAY}&received=1`);
       const r = res.json().receivedByQuintile;
       expect(r).toHaveLength(5);
       expect(r[0].receivedSum).toBe(550 + 9999);
     });
 
     it('vem [] para janelas maiores que 8 dias (inclusive from=0)', async () => {
-      const longer = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 8 * DAY + 1}`);
+      const longer = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 8 * DAY + 1}&received=1`);
       expect(longer.statusCode).toBe(200);
       expect(longer.json().receivedByQuintile).toEqual([]);
-      const full = await get(`/internal/economy/summary?from=0&to=${Date.now()}`);
+      const full = await get(`/internal/economy/summary?from=0&to=${Date.now()}&received=1`);
       expect(full.json().receivedByQuintile).toEqual([]);
     });
   });
@@ -303,7 +313,7 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       // Zera 3 contas do 1º quinto: 47 holders → quintos de 10, 10, 9, 9, 9.
       await server.prisma.user.updateMany({ where: { id: { in: [hid(1), hid(2), hid(3)] } }, data: { kakera: 0 } });
 
-      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}`);
+      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}&received=1`);
       const { balances, receivedByQuintile } = res.json();
       expect(balances.holders).toBe(47);
       expect(balances.accounts).toBe(53);
@@ -327,7 +337,7 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
 
     it('com poucos holders, todos os quintos vêm anulados e os ausentes com n=0', async () => {
       await server.prisma.user.updateMany({ where: { id: { notIn: [hid(49), hid(50)] } }, data: { kakera: 0 } });
-      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}`);
+      const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}&received=1`);
       const { balances } = res.json();
       expect(balances.holders).toBe(2);
       expect(balances.total).toBe(990);
