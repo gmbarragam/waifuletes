@@ -15,9 +15,38 @@ export const MIN_GROUP_SIZE = 10;
 export const RECEIVED_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 
 /**
- * Motivos que criam moeda nova (entram em `receivedByQuintile`). Ficam de fora:
- * - ADMIN_GRANT: usado tanto por concessões do admin quanto pelo câmbio do banco da Ravena
- *   (compra/venda de Zinthos, distinguível só pelo metadata), então não é criação pura;
+ * O ADMIN_GRANT junta coisas diferentes (câmbio do banco da Ravena, bônus de doador, prêmio do caça-níquel,
+ * edição no painel, concessão manual). Quem chama distingue pelo metadata: `metadata.reason` (banco da
+ * Ravena: bank_withdraw_zinthos, bank_deposit_runas, ...) ou, na falta dele, `metadata.source`
+ * (grantZinthos da Ravena: DONOR_BONUS, SLOTS_PRIZE; painel: admin_panel_edit). Nos fluxos o motivo vira
+ * `ADMIN_GRANT:<valor em minúsculas>`; valor fora de [a-z0-9_]{1,64} vira `ADMIN_GRANT:other`, para que texto
+ * livre do chamador não exploda a cardinalidade. Sem reason/source em texto, fica `ADMIN_GRANT`.
+ */
+export const ADMIN_GRANT_SUFFIX_MAX = 64;
+const reasonKeySql = Prisma.sql`(
+  CASE
+    WHEN reason = 'ADMIN_GRANT' AND (
+      (jsonb_typeof(metadata->'reason') = 'string' AND metadata->>'reason' <> '')
+      OR (jsonb_typeof(metadata->'source') = 'string' AND metadata->>'source' <> '')
+    ) THEN
+      CASE
+        WHEN lower(COALESCE(NULLIF(
+               CASE WHEN jsonb_typeof(metadata->'reason') = 'string' THEN metadata->>'reason' END, ''),
+               metadata->>'source')) ~ ${`^[a-z0-9_]{1,${ADMIN_GRANT_SUFFIX_MAX}}$`}
+        THEN 'ADMIN_GRANT:' || lower(COALESCE(NULLIF(
+               CASE WHEN jsonb_typeof(metadata->'reason') = 'string' THEN metadata->>'reason' END, ''),
+               metadata->>'source'))
+        ELSE 'ADMIN_GRANT:other'
+      END
+    ELSE reason::text
+  END
+)`;
+
+/**
+ * Motivos (já com o sufixo do ADMIN_GRANT) que criam moeda nova e entram em `receivedByQuintile`.
+ * Ficam de fora:
+ * - ADMIN_GRANT e os demais ADMIN_GRANT:*: câmbio do banco (bank_*), edição do painel, concessões manuais e
+ *   valores desconhecidos não são criação clara;
  * - MARKET_TRADE: transferência entre jogadores;
  * - MARKET_BUY e HOSTING_FEE: saídas;
  * - HOSTING_FEE_WAIFU: registra o valor de waifus confiscadas abatido da dívida, não é crédito no saldo.
@@ -30,6 +59,8 @@ export const CREATION_REASONS = [
   'WISHLIST_BONUS',
   'SOULMATE_BONUS',
   'MARKET_REFUND',
+  'ADMIN_GRANT:donor_bonus',
+  'ADMIN_GRANT:slots_prize',
 ] as const;
 
 export interface EconomyFlow {
@@ -94,7 +125,7 @@ export class EconomySummaryService {
     >`
       SELECT
         (EXTRACT(EPOCH FROM date_trunc('hour', "createdAt"))::bigint * 1000) AS hour,
-        reason::text AS reason,
+        ${reasonKeySql} AS reason,
         COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::bigint AS amount_in,
         COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0)::bigint AS amount_out,
         COUNT(*)::bigint AS tx_count,
@@ -150,7 +181,7 @@ export class EconomySummaryService {
         FROM kakera_transactions
         WHERE "createdAt" >= ${fromTs} AND "createdAt" < ${toTs}
           AND amount > 0
-          AND reason::text IN (${Prisma.join([...CREATION_REASONS])})
+          AND ${reasonKeySql} IN (${Prisma.join([...CREATION_REASONS])})
         GROUP BY "userId"
       ),
       m AS (
