@@ -145,15 +145,17 @@ export class EconomySummaryService {
     // Retrato dos saldos: total e contas (todas), estatísticas entre quem tem saldo > 0.
     // totalAtWindowEnd: massa no instante `to`, reconstruída pelo extrato = total atual − Σ amount com
     // createdAt >= to (usa o índice de createdAt). Alinha a massa com o corte dos fluxos na hora exata.
+    // HOSTING_FEE_WAIFU fica de fora da soma: registra o valor da waifu confiscada abatido da dívida e nunca
+    // creditou o saldo.
     // Ressalva: só desconta o que tem linha no extrato. Mudanças de saldo sem extrato feitas depois de `to`
     // (ex.: /admin/kakera/give-all, exclusão de usuário, sobra do confisco da taxa de hospedagem) aparecem
-    // como se já existissem em `to`, ou seja, caem no período anterior ao corte. E as linhas
-    // HOSTING_FEE_WAIFU posteriores a `to` são descontadas embora não tenham creditado o saldo.
+    // como se já existissem em `to`, ou seja, caem no período anterior ao corte.
     const totalsQuery = this.prisma.$queryRaw<Array<{ total: bigint; accounts: bigint; after_to: bigint }>>`
       SELECT
         COALESCE(SUM(kakera), 0)::bigint AS total,
         COUNT(*)::bigint AS accounts,
-        (SELECT COALESCE(SUM(amount), 0)::bigint FROM kakera_transactions WHERE "createdAt" >= ${toTs}) AS after_to
+        (SELECT COALESCE(SUM(amount), 0)::bigint FROM kakera_transactions
+         WHERE "createdAt" >= ${toTs} AND reason <> 'HOSTING_FEE_WAIFU') AS after_to
       FROM users
     `;
     const holdersQuery = this.prisma.$queryRaw<
