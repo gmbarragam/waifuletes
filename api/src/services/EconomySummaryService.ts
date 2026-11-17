@@ -11,7 +11,7 @@ export const ECONOMY_SCHEMA_VERSION = 1;
 /** Grupos com menos membros que isto têm os valores anulados (evita identificar alguém). */
 export const MIN_GROUP_SIZE = 10;
 
-/** `receivedByQuintile` só é calculado para janelas de até 8 dias. */
+/** `receivedByQuintile` só é calculado quando pedido (`received=1`) e para janelas de até 8 dias. */
 export const RECEIVED_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 
 /**
@@ -114,10 +114,15 @@ const tsFromMs = (ms: number) => Prisma.sql`(TIMESTAMP '1970-01-01 00:00:00' + (
 export class EconomySummaryService {
   constructor(private prisma: PrismaClient) {}
 
-  async getSummary(from: number, to: number, now: number = Date.now()): Promise<EconomySummary> {
+  async getSummary(
+    from: number,
+    to: number,
+    now: number = Date.now(),
+    opts: { received?: boolean } = {}
+  ): Promise<EconomySummary> {
     const fromTs = tsFromMs(from);
     const toTs = tsFromMs(to);
-    const includeReceived = to - from <= RECEIVED_MAX_WINDOW_MS;
+    const includeReceived = Boolean(opts.received) && to - from <= RECEIVED_MAX_WINDOW_MS;
 
     // Fluxos do extrato por hora (UTC) e motivo.
     const flowsQuery = this.prisma.$queryRaw<

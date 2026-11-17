@@ -25,16 +25,22 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
         properties: {
           from: { type: 'integer', minimum: 0, maximum: MAX_EPOCH_MS },
           to: { type: 'integer', minimum: 1, maximum: MAX_EPOCH_MS },
+          // 1 pede receivedByQuintile (só para janelas de até 8 dias); a carga da Ravena pede uma vez por dia.
+          received: { type: 'integer', enum: [0, 1], default: 0 },
         },
       },
     },
     handler: async (request, reply) => {
-      const { from, to } = request.query as { from: number; to: number };
+      const { from, to, received } = request.query as { from: number; to: number; received?: number };
       const now = Date.now();
 
       const result = await withBusinessSpan(
         'economy summary',
-        { 'waifu.economy.window_ms': to - from, 'waifu.economy.full_history': from === 0 },
+        {
+          'waifu.economy.window_ms': to - from,
+          'waifu.economy.full_history': from === 0,
+          'waifu.economy.received': received === 1,
+        },
         async () => {
           if (!(to > from)) {
             return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` deve ser maior que `from`.' } };
@@ -42,7 +48,7 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
           if (to > now + FUTURE_TOLERANCE_MS) {
             return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` não pode estar no futuro.' } };
           }
-          const summary = await economyService.getSummary(from, to, now);
+          const summary = await economyService.getSummary(from, to, now, { received: received === 1 });
           setAttrs({
             'waifu.economy.flow_rows': summary.ledger.flows.length,
             'waifu.economy.holders': summary.balances.holders,
