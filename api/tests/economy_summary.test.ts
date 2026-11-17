@@ -300,6 +300,23 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       }
     });
 
+    it('HOSTING_FEE_WAIFU depois de `to` não é descontado (nunca creditou o saldo)', async () => {
+      const at = Date.now() - 5_000;
+      const prisma = server.prisma;
+      // Cobrança parcial: debita o saldo (com extrato) e registra o confisco (sem crédito no saldo).
+      await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { decrement: 40 } } });
+      const rows = await Promise.all([
+        prisma.kakeraTransaction.create({ data: { userId: hid(50), amount: -40, reason: 'HOSTING_FEE', createdAt: new Date(at) } }),
+        prisma.kakeraTransaction.create({ data: { userId: hid(50), amount: 300, reason: 'HOSTING_FEE_WAIFU', createdAt: new Date(at) } }),
+      ]);
+      try {
+        expect(await summary(at)).toMatchObject({ total: 12710, totalAtWindowEnd: 12750 });
+      } finally {
+        await prisma.kakeraTransaction.deleteMany({ where: { id: { in: rows.map((r: any) => r.id) } } });
+        await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { increment: 40 } } });
+      }
+    });
+
     it('mudança sem extrato (como o give-all) depois de `to` cai antes do corte', async () => {
       const prisma = server.prisma;
       await prisma.user.updateMany({ data: { kakera: { increment: 2 } } }); // 53 contas
