@@ -271,6 +271,48 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
     });
   });
 
+  describe('totalAtWindowEnd', () => {
+    const summary = async (to: number) =>
+      (await get(`/internal/economy/summary?from=${to - HOUR}&to=${to}`)).json().balances;
+
+    it('total atual menos o extrato com createdAt >= to', async () => {
+      // Nada no extrato depois de SPLIT_BASE + 1h: igual ao total.
+      expect(await summary(SPLIT_BASE + HOUR)).toMatchObject({ total: 12750, totalAtWindowEnd: 12750 });
+      // A partir de SPLIT_BASE: 100 + 100 − 50 + 30 + 20 + 5 + 6 + 7 + 8 + 9 + 10 + 11 = 256.
+      expect(await summary(SPLIT_BASE)).toMatchObject({ total: 12750, totalAtWindowEnd: 12750 - 256 });
+      // `to` é exclusivo: a linha em SPLIT_BASE + 1 fica antes do corte quando to = SPLIT_BASE + 2.
+      expect((await summary(SPLIT_BASE + 2)).totalAtWindowEnd).toBe(12750 - 156);
+    });
+
+    it('linha do extrato depois de `to` é descontada; antes, não', async () => {
+      const at = Date.now() - 5_000;
+      const prisma = server.prisma;
+      await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { increment: 123 } } });
+      const row = await prisma.kakeraTransaction.create({
+        data: { userId: hid(50), amount: 123, reason: 'DAILY_REWARD', createdAt: new Date(at) },
+      });
+      try {
+        expect(await summary(at)).toMatchObject({ total: 12873, totalAtWindowEnd: 12750 });
+        expect(await summary(at + 1)).toMatchObject({ total: 12873, totalAtWindowEnd: 12873 });
+      } finally {
+        await prisma.kakeraTransaction.delete({ where: { id: row.id } });
+        await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { decrement: 123 } } });
+      }
+    });
+
+    it('mudança sem extrato (como o give-all) depois de `to` cai antes do corte', async () => {
+      const prisma = server.prisma;
+      await prisma.user.updateMany({ data: { kakera: { increment: 2 } } }); // 53 contas
+      try {
+        const b = await summary(SPLIT_BASE + HOUR);
+        expect(b.total).toBe(12750 + 106);
+        expect(b.totalAtWindowEnd).toBe(12750 + 106);
+      } finally {
+        await prisma.user.updateMany({ data: { kakera: { decrement: 2 } } });
+      }
+    });
+  });
+
   describe('entradas por quinto', () => {
     it('soma e mediana só de motivos de criação, na janela, por faixa de saldo atual', async () => {
       const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}&received=1`);
