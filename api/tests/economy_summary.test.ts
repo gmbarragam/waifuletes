@@ -32,6 +32,7 @@ const DAY = 24 * HOUR;
 const FLOW_BASE = Date.UTC(2026, 0, 10, 12, 0, 0);
 const RECV_BASE = Date.UTC(2026, 1, 1, 0, 0, 0);
 const OLD_TS = Date.UTC(2020, 5, 1, 3, 30, 0);
+const SPLIT_BASE = Date.UTC(2026, 2, 1, 9, 0, 0);
 
 const hid = (i: number) => `econ_h${String(i).padStart(2, '0')}`;
 
@@ -64,7 +65,13 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       ],
     });
 
-    const tx = (userId: string, amount: number, reason: any, at: number) => ({ userId, amount, reason, createdAt: new Date(at) });
+    const tx = (userId: string, amount: number, reason: any, at: number, metadata?: any) => ({
+      userId,
+      amount,
+      reason,
+      createdAt: new Date(at),
+      ...(metadata !== undefined ? { metadata } : {}),
+    });
     await prisma.kakeraTransaction.createMany({
       data: [
         // Hora FLOW_BASE
@@ -91,6 +98,25 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
         tx(hid(1), -20, 'MARKET_BUY', RECV_BASE + DAY),
         // 5º quinto: só h50 recebe
         tx(hid(50), 700, 'DIVORCE', RECV_BASE + 2 * DAY),
+        // 2º quinto (h11): prêmio do caça-níquel e bônus de doador contam como criação; câmbio do banco não
+        tx(hid(11), 15, 'ADMIN_GRANT', RECV_BASE + 3 * DAY, { source: 'SLOTS_PRIZE' }),
+        tx(hid(11), 5, 'ADMIN_GRANT', RECV_BASE + 3 * DAY, { source: 'DONOR_BONUS', donorName: 'x' }),
+        tx(hid(11), 400, 'ADMIN_GRANT', RECV_BASE + 3 * DAY, { reason: 'bank_withdraw_zinthos' }),
+
+        // Hora SPLIT_BASE: ADMIN_GRANT separado por metadata.reason / metadata.source
+        tx(hid(20), 100, 'ADMIN_GRANT', SPLIT_BASE + 1, { reason: 'bank_withdraw_zinthos' }),
+        tx(hid(21), 100, 'ADMIN_GRANT', SPLIT_BASE + 2, { reason: 'bank_withdraw_zinthos' }),
+        tx(hid(20), -50, 'ADMIN_GRANT', SPLIT_BASE + 3, { reason: 'bank_deposit_runas' }),
+        tx(hid(20), 30, 'ADMIN_GRANT', SPLIT_BASE + 4, { source: 'SLOTS_PRIZE' }),
+        tx(hid(20), 20, 'ADMIN_GRANT', SPLIT_BASE + 5, { reason: '', source: 'DONOR_BONUS' }),
+        tx(hid(20), 5, 'ADMIN_GRANT', SPLIT_BASE + 6),
+        tx(hid(20), 6, 'ADMIN_GRANT', SPLIT_BASE + 7, { reason: 5 }),
+        tx(hid(20), 7, 'ADMIN_GRANT', SPLIT_BASE + 8, { reason: "x'; DROP TABLE users;--" }),
+        tx(hid(20), 8, 'ADMIN_GRANT', SPLIT_BASE + 9, { reason: 'a'.repeat(65) }),
+        tx(hid(20), 9, 'ADMIN_GRANT', SPLIT_BASE + 10, { reason: 'a'.repeat(64) }),
+        tx(hid(20), 10, 'ADMIN_GRANT', SPLIT_BASE + 11, { reason: 'Bank-Deposit' }),
+        tx(hid(20), 11, 'DIVORCE', SPLIT_BASE + 12, { reason: 'bank_withdraw_zinthos', forced: true }),
+
         // Logo após o fim da janela de 7 dias
         tx(hid(1), 9999, 'DAILY_REWARD', RECV_BASE + 7 * DAY),
       ],
@@ -187,9 +213,40 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       expect(flows.find((f) => f.hour === FLOW_BASE - HOUR)).toMatchObject({ reason: 'DAILY_REWARD', amountIn: 7 });
       expect(flows.find((f) => f.hour === FLOW_BASE + 2 * HOUR)).toMatchObject({ reason: 'DAILY_REWARD', amountIn: 9 });
       const totalCount = flows.reduce((s, f) => s + f.count, 0);
-      expect(totalCount).toBe(26);
+      expect(totalCount).toBe(26 + 3 + 12);
       // Sem IDs de jogador em lugar nenhum da resposta.
       expect(res.body).not.toMatch(/econ_/);
+    });
+  });
+
+  describe('ADMIN_GRANT separado pelo metadata', () => {
+    it('usa metadata.reason (ou metadata.source) como sufixo, saneado', async () => {
+      const res = await get(`/internal/economy/summary?from=${SPLIT_BASE}&to=${SPLIT_BASE + HOUR}`);
+      const flows = res.json().ledger.flows as any[];
+      const f = (reason: string, amountIn: number, amountOut: number, count: number, users: number) => ({
+        hour: SPLIT_BASE,
+        reason,
+        amountIn,
+        amountOut,
+        count,
+        users,
+      });
+      const expected = [
+        f('ADMIN_GRANT:bank_withdraw_zinthos', 200, 0, 2, 2),
+        f('ADMIN_GRANT:bank_deposit_runas', 0, 50, 1, 1),
+        f('ADMIN_GRANT:slots_prize', 30, 0, 1, 1),
+        f('ADMIN_GRANT:donor_bonus', 20, 0, 1, 1),
+        // sem metadata ou reason que não é texto: motivo cru
+        f('ADMIN_GRANT', 11, 0, 2, 1),
+        // injeção, 65 caracteres e caractere fora de [a-z0-9_]
+        f('ADMIN_GRANT:other', 25, 0, 3, 1),
+        f(`ADMIN_GRANT:${'a'.repeat(64)}`, 9, 0, 1, 1),
+        // metadata.reason em outro motivo não muda nada
+        f('DIVORCE', 11, 0, 1, 1),
+      ];
+      expect(flows).toHaveLength(expected.length);
+      expect(flows).toEqual(expect.arrayContaining(expected));
+      for (const row of flows) expect(row.reason).toMatch(/^[A-Z_]+(:[a-z0-9_]{1,64})?$/);
     });
   });
 
@@ -218,7 +275,7 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}`);
       expect(res.json().receivedByQuintile).toEqual([
         { q: 1, n: 10, receivedSum: 550, receivedMedian: 50 },
-        { q: 2, n: 10, receivedSum: 0, receivedMedian: 0 },
+        { q: 2, n: 10, receivedSum: 20, receivedMedian: 0 },
         { q: 3, n: 10, receivedSum: 0, receivedMedian: 0 },
         { q: 4, n: 10, receivedSum: 0, receivedMedian: 0 },
         { q: 5, n: 10, receivedSum: 700, receivedMedian: 0 },
@@ -258,9 +315,9 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
         { q: 4, n: 9, min: null, max: null, sum: null },
         { q: 5, n: 9, min: null, max: null, sum: null },
       ]);
-      // h04..h10 continuam no 1º quinto (recebem 40..100); h11..h13 entram nele sem ter recebido.
+      // h04..h10 continuam no 1º quinto (recebem 40..100); h11 (20 de criação) a h13 entram nele.
       expect(receivedByQuintile).toEqual([
-        { q: 1, n: 10, receivedSum: 490, receivedMedian: 50 },
+        { q: 1, n: 10, receivedSum: 510, receivedMedian: 50 },
         { q: 2, n: 10, receivedSum: 0, receivedMedian: 0 },
         { q: 3, n: 9, receivedSum: null, receivedMedian: null },
         { q: 4, n: 9, receivedSum: null, receivedMedian: null },
