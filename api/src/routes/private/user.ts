@@ -388,6 +388,60 @@ export const privateUserRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/user/:userId/mythic-slots', addMythicSlotsRoute);
   fastify.post('/api/private/users/:userId/mythic-slots', addMythicSlotsRoute);
 
+  const addRollsRoute = {
+    preHandler: verifyApiKey,
+    schema: {
+      description: 'Adiciona rolls de sorteio diretamente para o usuário (bônus de doação/Ravena-AI)',
+      tags: ['Usuários (Privado)'],
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string' } },
+      },
+      body: {
+        type: 'object',
+        required: ['amount'],
+        additionalProperties: false,
+        properties: {
+          amount: { type: 'integer', minimum: 1 },
+          reason: { type: 'string' },
+          extraMaxRolls: { type: 'integer', minimum: 0 },
+        },
+      },
+    },
+    handler: async (request: any, reply: any) => {
+      const { userId } = request.params as { userId: string };
+      const { amount, reason, extraMaxRolls } = request.body as {
+        amount: number;
+        reason?: string;
+        extraMaxRolls?: number;
+      };
+
+      try {
+        const result = await cooldownService.addRolls(userId, amount, extraMaxRolls || 0);
+        return reply.send({
+          success: true,
+          data: {
+            userId,
+            addedRolls: amount,
+            availableRolls: result.availableRolls,
+            maxRolls: result.maxRolls,
+            reason: reason || 'BONUS_DONATION',
+          },
+        });
+      } catch (err: any) {
+        return reply.status(500).send({
+          success: false,
+          error: { code: 'ROLLS_ADD_FAILED', message: err.message },
+        });
+      }
+    },
+  };
+
+  fastify.post('/user/:userId/rolls/add', addRollsRoute);
+  fastify.post('/api/private/users/:userId/rolls/add', addRollsRoute);
+  fastify.post('/user/:userId/add-rolls', addRollsRoute);
+
   fastify.get('/user/:userId/mythic-slots', {
     preHandler: verifyApiKey,
     schema: {

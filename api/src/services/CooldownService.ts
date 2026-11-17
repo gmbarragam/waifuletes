@@ -129,7 +129,7 @@ if raw then
   local ok, data = pcall(cjson.decode, raw)
   if ok and data then
     if type(data.rolls) == 'number' then
-      rolls = math.min(maxRolls, data.rolls)
+      rolls = data.rolls
     end
     if type(data.lastUpdate) == 'number' then
       lastUpdate = data.lastUpdate
@@ -151,7 +151,6 @@ if rolls < maxRolls then
     end
   end
 else
-  rolls = maxRolls
   lastUpdate = now
 end
 
@@ -183,13 +182,71 @@ local raw = redis.call('get', key)
 if raw then
   local ok, data = pcall(cjson.decode, raw)
   if ok and data then
-    local rolls = math.min(maxRolls, (data.rolls or 0) + 1)
+    local rolls = (data.rolls or 0) + 1
     data.rolls = rolls
     redis.call('set', key, cjson.encode(data), 'EX', ttl)
     return rolls
   end
 end
 return -1
+`;
+
+const ADD_ROLLS_LUA = `
+local key = KEYS[1]
+local amount = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local regenSeconds = tonumber(ARGV[3])
+local maxRolls = tonumber(ARGV[4])
+local ttl = tonumber(ARGV[5])
+local regenMs = regenSeconds * 1000
+
+local raw = redis.call('get', key)
+local rolls = maxRolls
+local lastUpdate = now
+
+if raw then
+  local ok, data = pcall(cjson.decode, raw)
+  if ok and data then
+    if type(data.rolls) == 'number' then
+      rolls = data.rolls
+    end
+    if type(data.lastUpdate) == 'number' then
+      lastUpdate = data.lastUpdate
+    end
+  end
+end
+
+if rolls < maxRolls then
+  local elapsedMs = now - lastUpdate
+  if elapsedMs > 0 then
+    local gained = math.floor(elapsedMs / regenMs)
+    if gained > 0 then
+      rolls = math.min(maxRolls, rolls + gained)
+      if rolls >= maxRolls then
+        lastUpdate = now
+      else
+        lastUpdate = lastUpdate + (gained * regenMs)
+      end
+    end
+  end
+else
+  lastUpdate = now
+end
+
+rolls = rolls + amount
+redis.call('set', key, cjson.encode({ rolls = rolls, lastUpdate = lastUpdate }), 'EX', ttl)
+
+local remainingNeeded = math.max(0, maxRolls - 1 - rolls)
+local secondsToNext = 0
+local fullRecharge = 0
+if rolls < maxRolls then
+  local elapsedMs = now - lastUpdate
+  local secondsIntoPeriod = math.floor(elapsedMs / 1000) % regenSeconds
+  secondsToNext = regenSeconds - secondsIntoPeriod
+  fullRecharge = secondsToNext + (remainingNeeded * regenSeconds)
+end
+
+return { rolls, secondsToNext, fullRecharge, lastUpdate }
 `;
 
 export class CooldownService {
@@ -264,7 +321,7 @@ export class CooldownService {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        rolls = typeof parsed.rolls === 'number' ? Math.min(maxRolls, parsed.rolls) : maxRolls;
+        rolls = typeof parsed.rolls === 'number' ? parsed.rolls : maxRolls;
         lastUpdate = typeof parsed.lastUpdate === 'number' ? parsed.lastUpdate : now;
       } catch (_) {
         rolls = maxRolls;
@@ -284,7 +341,6 @@ export class CooldownService {
         }
       }
     } else {
-      rolls = maxRolls;
       lastUpdate = now;
     }
 
@@ -357,6 +413,43 @@ export class CooldownService {
       maxRolls.toString(),
       ttlSeconds.toString()
     );
+  }
+
+  /**
+   * Adiciona rolls extras diretamente ao saldo de rolls do usuário (bônus de doação).
+   * Os rolls acumulados podem ultrapassar maxRolls e não sofrem expiração imediata.
+   */
+  async addRolls(
+    userId: string,
+    amount: number,
+    extraMaxRolls: number = 0
+  ): Promise<UserRollsState> {
+    const maxRolls = this.getUserMaxRolls(userId, extraMaxRolls);
+    const regenSeconds = this.getUserRegenSeconds(maxRolls);
+    const now = Date.now();
+    const ttlSeconds = 30 * 24 * 3600;
+
+    const res = (await this.redis.eval(
+      ADD_ROLLS_LUA,
+      1,
+      this.userRollsKey(userId),
+      amount.toString(),
+      now.toString(),
+      regenSeconds.toString(),
+      maxRolls.toString(),
+      ttlSeconds.toString()
+    )) as [number, number, number, number];
+
+    const [rolls, secondsToNext, fullRechargeSeconds] = res;
+
+    return {
+      availableRolls: rolls,
+      maxRolls,
+      secondsToNext,
+      fullRechargeSeconds,
+      fullRechargeAt: new Date(now + fullRechargeSeconds * 1000),
+      regenSeconds,
+    };
   }
 
   async getRollCooldown(userId: string, extraMaxRolls: number = 0) {
