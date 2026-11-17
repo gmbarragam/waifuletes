@@ -95,6 +95,7 @@ export interface EconomySummary {
   ledger: { available: boolean; flows: EconomyFlow[] };
   balances: {
     total: number;
+    totalAtWindowEnd: number;
     holders: number;
     accounts: number;
     p50: number | null;
@@ -142,8 +143,18 @@ export class EconomySummaryService {
     `;
 
     // Retrato dos saldos: total e contas (todas), estatísticas entre quem tem saldo > 0.
-    const totalsQuery = this.prisma.$queryRaw<Array<{ total: bigint; accounts: bigint }>>`
-      SELECT COALESCE(SUM(kakera), 0)::bigint AS total, COUNT(*)::bigint AS accounts FROM users
+    // totalAtWindowEnd: massa no instante `to`, reconstruída pelo extrato = total atual − Σ amount com
+    // createdAt >= to (usa o índice de createdAt). Alinha a massa com o corte dos fluxos na hora exata.
+    // Ressalva: só desconta o que tem linha no extrato. Mudanças de saldo sem extrato feitas depois de `to`
+    // (ex.: /admin/kakera/give-all, exclusão de usuário, sobra do confisco da taxa de hospedagem) aparecem
+    // como se já existissem em `to`, ou seja, caem no período anterior ao corte. E as linhas
+    // HOSTING_FEE_WAIFU posteriores a `to` são descontadas embora não tenham creditado o saldo.
+    const totalsQuery = this.prisma.$queryRaw<Array<{ total: bigint; accounts: bigint; after_to: bigint }>>`
+      SELECT
+        COALESCE(SUM(kakera), 0)::bigint AS total,
+        COUNT(*)::bigint AS accounts,
+        (SELECT COALESCE(SUM(amount), 0)::bigint FROM kakera_transactions WHERE "createdAt" >= ${toTs}) AS after_to
+      FROM users
     `;
     const holdersQuery = this.prisma.$queryRaw<
       Array<{ holders: bigint; mass: bigint; top_mass: bigint; p50: number | null; p90: number | null }>
@@ -252,6 +263,7 @@ export class EconomySummaryService {
       ledger: { available: true, flows },
       balances: {
         total: num(totals.total),
+        totalAtWindowEnd: num(totals.total) - num(totals.after_to),
         holders,
         accounts: num(totals.accounts),
         p50: holders > 0 ? numOrNull(hs.p50) : null,
