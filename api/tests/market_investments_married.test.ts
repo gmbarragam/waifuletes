@@ -60,13 +60,12 @@ describe('💍 Reformulação de Cotas, Casamento e Soulmate', () => {
 
     const service = new MarketInvestmentService(mockPrisma, mockCharacterService);
 
-    // Cotação para o próprio cônjuge
+    // Cotação para o próprio cônjuge (keys = 2 -> peso 0.60, 40% OFF)
     const quoteSpouse = await service.getCharacterQuote('makima', 'user-spouse');
     expect(quoteSpouse.character.isOwner).toBe(true);
     expect(quoteSpouse.character.isSoulmate).toBe(false);
-    expect(quoteSpouse.pricing.discountPercent).toBe(80);
-    // 80% de desconto sobre a cota base
-    expect(quoteSpouse.pricing.cotaPrice).toBe(Math.round(quoteSpouse.pricing.baseCotaPrice * 0.20));
+    expect(quoteSpouse.pricing.discountPercent).toBe(40);
+    expect(quoteSpouse.pricing.cotaPrice).toBe(Math.ceil(Math.round(quoteSpouse.pricing.baseCotaPrice * 4 * 0.60) / 4));
 
     // Cotação para terceiro
     const quoteOther = await service.getCharacterQuote('makima', 'user-stranger');

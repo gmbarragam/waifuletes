@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
 import { CharacterService } from './CharacterService.js';
 import { config, ravenaMarketHeaders } from '../config.js';
+import { calculateRankMultiplier, calculateCharacterSharePricing } from '../utils/rarityCalculator.js';
 
 export const BASE_DAILY_ZINTHOS = 21000;
 
@@ -211,6 +212,67 @@ export class MarketInvestmentService {
   }
 
   /**
+   * Obtém a posição (rank) do personagem dentro de sua categoria (raridade) e o multiplicador correspondente
+   */
+  async getCharacterRankMultiplier(
+    character: {
+      id: string;
+      baseRarity: Rarity;
+      rarityRank?: number | null;
+      rank?: number | null;
+      popularityScore?: number | null;
+      claimCount?: number | null;
+    },
+    totalInRarity: number
+  ): Promise<{ position: number; total: number; rankMultiplier: number }> {
+    const total = Math.max(1, totalInRarity || 1000);
+    let position = character.rarityRank ?? null;
+
+    if (!position && typeof this.prisma?.$queryRaw === 'function') {
+      try {
+        const rarity = character.baseRarity;
+        const countResult = await this.prisma.$queryRaw<{ count: bigint }[]>`
+          SELECT COUNT(*) as count
+          FROM characters
+          WHERE "baseRarity" = ${rarity}::"Rarity"
+            AND "isActive" = true
+            AND (
+              (rank IS NOT NULL AND ${character.rank ?? null} IS NOT NULL AND rank < ${character.rank})
+              OR (${character.rank ?? null} IS NULL AND rank IS NOT NULL)
+              OR (
+                (rank = ${character.rank ?? null} OR (rank IS NULL AND ${character.rank ?? null} IS NULL))
+                AND "popularityScore" > ${character.popularityScore ?? 0}
+              )
+              OR (
+                (rank = ${character.rank ?? null} OR (rank IS NULL AND ${character.rank ?? null} IS NULL))
+                AND "popularityScore" = ${character.popularityScore ?? 0}
+                AND "claimCount" > ${character.claimCount ?? 0}
+              )
+              OR (
+                (rank = ${character.rank ?? null} OR (rank IS NULL AND ${character.rank ?? null} IS NULL))
+                AND "popularityScore" = ${character.popularityScore ?? 0}
+                AND "claimCount" = ${character.claimCount ?? 0}
+                AND id < ${character.id}
+              )
+            )
+        `;
+        if (Array.isArray(countResult) && countResult[0] && countResult[0].count !== undefined) {
+          position = Number(countResult[0].count) + 1;
+        }
+      } catch {
+        position = null;
+      }
+    }
+
+    if (!position || position < 1) {
+      position = total;
+    }
+
+    const rankMultiplier = calculateRankMultiplier(position, total);
+    return { position, total, rankMultiplier };
+  }
+
+  /**
    * Consulta a cotação dinâmica de compra e cotas de um personagem
    */
   async getCharacterQuote(characterIdOrSlug: string, userId?: string) {
@@ -225,6 +287,10 @@ export class MarketInvestmentService {
 
     const macro = await this.getMacroStats();
     const rarityInfo = macro.rarityStats[character.baseRarity];
+    const { position: rarityPosition, rankMultiplier } = await this.getCharacterRankMultiplier(
+      character as any,
+      rarityInfo.total
+    );
 
     // Checa se já pertence a alguém
     const haremEntry = await this.prisma.haremEntry.findFirst({
@@ -236,8 +302,7 @@ export class MarketInvestmentService {
     let isSoulmate = false;
     let isOwner = false;
     let canInvest = true;
-    let discountPercent = 0;
-    let quoteCotaPrice = rarityInfo.cotaPrice;
+    const currentKeys = haremEntry ? (haremEntry.keys ?? 1) : 0;
 
     if (haremEntry) {
       if (userId && haremEntry.userId === userId) {
@@ -250,17 +315,27 @@ export class MarketInvestmentService {
             },
           },
         });
-        isSoulmate = (haremEntry.keys ?? 1) >= 10 || Boolean(soulmateRecord);
+        isSoulmate = currentKeys >= 10 || Boolean(soulmateRecord);
         if (isSoulmate) {
           canInvest = false;
-        } else {
-          discountPercent = 80;
-          quoteCotaPrice = Math.round(rarityInfo.cotaPrice * 0.20);
         }
       } else {
         canInvest = false;
       }
     }
+
+    const sharePricing = calculateCharacterSharePricing({
+      baseRarity: character.baseRarity,
+      baseDynamicPrice: rarityInfo.dynamicPrice,
+      scarcityMultiplier: rarityInfo.scarcityMultiplier,
+      inflationMultiplier: macro.inflationMultiplier,
+      rankMultiplier,
+      isOwner,
+      currentKeys,
+    });
+
+    const discountPercent = sharePricing.discountPercent;
+    const quoteCotaPrice = sharePricing.cotaPrice;
 
     // Investimentos ativos no personagem
     const activeInvestments = await this.prisma.characterInvestment.findMany({
@@ -285,15 +360,18 @@ export class MarketInvestmentService {
         owner: haremEntry ? { id: haremEntry.user.id, name: haremEntry.user.name } : null,
         isOwner,
         isSoulmate,
-        currentKeys: haremEntry ? haremEntry.keys : 0,
+        currentKeys,
       },
       pricing: {
         days: rarityInfo.days,
         basePrice: rarityInfo.basePrice,
-        dynamicPrice: rarityInfo.dynamicPrice,
+        dynamicPrice: sharePricing.dynamicPrice,
         cotaPrice: quoteCotaPrice,
-        baseCotaPrice: rarityInfo.cotaPrice,
+        baseCotaPrice: sharePricing.baseCotaPrice,
         discountPercent,
+        keyProgressionWeight: sharePricing.keyProgressionWeight,
+        rankMultiplier,
+        rarityPosition,
         canInvest,
         inflationMultiplier: macro.inflationMultiplier,
         inflationPercent: macro.inflationPercent,
@@ -443,7 +521,10 @@ export class MarketInvestmentService {
             cotaPrice,
             totalPrice: quote.pricing.dynamicPrice,
             isOwner,
-            discountPercent: isOwner ? 80 : 0,
+            currentKeys: quote.character.currentKeys,
+            rankMultiplier: quote.pricing.rankMultiplier,
+            keyProgressionWeight: quote.pricing.keyProgressionWeight,
+            discountPercent: quote.pricing.discountPercent,
           },
         },
       });
@@ -495,7 +576,7 @@ export class MarketInvestmentService {
             totalShares: 0,
             cost: totalCost,
             remainingShares: 4,
-            discountPercent: 80,
+            discountPercent: quote.pricing.discountPercent,
             newBalance: user.kakera - totalCost,
           };
         } else {
@@ -530,7 +611,7 @@ export class MarketInvestmentService {
             totalShares: newShares,
             cost: totalCost,
             remainingShares: 4 - newShares,
-            discountPercent: 80,
+            discountPercent: quote.pricing.discountPercent,
             newBalance: user.kakera - totalCost,
           };
         }
@@ -708,37 +789,51 @@ export class MarketInvestmentService {
     const userHaremMap = new Map(userHaremEntries.map((h) => [h.characterId, h.keys]));
     const macro = await this.getMacroStats();
 
-    return investments.map((inv) => {
-      const formattedChar = this.formatCharacter(inv.character);
-      const rarityInfo = macro.rarityStats[inv.character.baseRarity];
-      const isMarried = userHaremMap.has(inv.character.id);
-      const currentKeys = userHaremMap.get(inv.character.id) ?? 0;
-      const cotaPriceCurrent = isMarried ? Math.round(rarityInfo.cotaPrice * 0.20) : rarityInfo.cotaPrice;
-      const boostPercent = inv.shares === 1 ? 300 : inv.shares === 2 ? 900 : 2400;
-
-      return {
-        id: inv.id,
-        character: {
-          id: inv.character.id,
-          name: inv.character.name,
-          series: inv.character.series,
+    return Promise.all(
+      investments.map(async (inv) => {
+        const formattedChar = this.formatCharacter(inv.character);
+        const rarityInfo = macro.rarityStats[inv.character.baseRarity];
+        const isMarried = userHaremMap.has(inv.character.id);
+        const currentKeys = userHaremMap.get(inv.character.id) ?? 0;
+        const { rankMultiplier } = await this.getCharacterRankMultiplier(
+          inv.character as any,
+          rarityInfo.total
+        );
+        const sharePricing = calculateCharacterSharePricing({
           baseRarity: inv.character.baseRarity,
-          imageUrl: formattedChar.imageUrl,
-        },
-        shares: inv.shares,
-        percent: inv.shares * 25,
-        totalZinthosInvested: inv.totalZinthos,
-        cotaPriceCurrent,
-        baseCotaPrice: rarityInfo.cotaPrice,
-        totalPriceCurrent: rarityInfo.dynamicPrice,
-        boostPercent,
-        remainingShares: 4 - inv.shares,
-        isMarried,
-        currentKeys,
-        discountPercent: isMarried ? 80 : 0,
-        createdAt: inv.createdAt,
-        updatedAt: inv.updatedAt,
-      };
-    });
+          baseDynamicPrice: rarityInfo.dynamicPrice,
+          scarcityMultiplier: rarityInfo.scarcityMultiplier,
+          inflationMultiplier: macro.inflationMultiplier,
+          rankMultiplier,
+          isOwner: isMarried,
+          currentKeys,
+        });
+        const boostPercent = inv.shares === 1 ? 300 : inv.shares === 2 ? 900 : 2400;
+
+        return {
+          id: inv.id,
+          character: {
+            id: inv.character.id,
+            name: inv.character.name,
+            series: inv.character.series,
+            baseRarity: inv.character.baseRarity,
+            imageUrl: formattedChar.imageUrl,
+          },
+          shares: inv.shares,
+          percent: inv.shares * 25,
+          totalZinthosInvested: inv.totalZinthos,
+          cotaPriceCurrent: sharePricing.cotaPrice,
+          baseCotaPrice: sharePricing.baseCotaPrice,
+          totalPriceCurrent: sharePricing.dynamicPrice,
+          boostPercent,
+          remainingShares: 4 - inv.shares,
+          isMarried,
+          currentKeys,
+          discountPercent: sharePricing.discountPercent,
+          createdAt: inv.createdAt,
+          updatedAt: inv.updatedAt,
+        };
+      })
+    );
   }
 }

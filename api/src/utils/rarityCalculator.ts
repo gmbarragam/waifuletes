@@ -87,11 +87,92 @@ export interface DivorceRefundOptions {
  * - Posições inferiores têm piso mínimo garantido em 1.0x (não desvaloriza abaixo do valor base).
  */
 export function calculateRankMultiplier(position: number, total: number): number {
-  if (!total || total <= 1 || !position || position <= 1) return 7.0;
+  if (!total || total <= 1 || !position || position < 1) return 1.0;
+  if (position === 1) return 7.0;
   if (position >= total) return 1.0;
   const ratio = Math.max(0, 1.0 - (position - 1) / total);
   const mult = Math.max(1.0, 1.0 + 6.0 * Math.pow(ratio, 3));
   return Number(mult.toFixed(4));
+}
+
+/**
+ * Pesos progressivos de custo para evolução de chaves via cotas de cônjuge (chaves 1 -> 2 até 9 -> 10).
+ * Quanto mais chaves o jogador possui no personagem, mais caras ficam as cotas.
+ * A soma total dos 9 níveis até Soulmate é 10.10x o valor de referência (garantindo que o custo total
+ * de todas as 36 cotas para virar Soulmate seja sempre > 10x o valor líquido de divórcio da Soulmate, ~11.69x).
+ */
+export const MARRIED_KEY_PROGRESSION_WEIGHTS = [
+  0.40, // Chave 1 -> 2 (60% OFF)
+  0.60, // Chave 2 -> 3 (40% OFF)
+  0.80, // Chave 3 -> 4 (20% OFF)
+  1.00, // Chave 4 -> 5 (100% da referência)
+  1.15, // Chave 5 -> 6 (+15%)
+  1.30, // Chave 6 -> 7 (+30%)
+  1.45, // Chave 7 -> 8 (+45%)
+  1.60, // Chave 8 -> 9 (+60%)
+  1.80, // Chave 9 -> 10 / Soulmate (+80%)
+];
+
+export interface CharacterSharePricingParams {
+  baseRarity: Rarity;
+  baseDynamicPrice: number;
+  scarcityMultiplier?: number;
+  inflationMultiplier?: number;
+  rankMultiplier?: number;
+  isOwner?: boolean;
+  currentKeys?: number;
+}
+
+export function calculateCharacterSharePricing(params: CharacterSharePricingParams) {
+  const inflationMultiplier =
+    typeof params.inflationMultiplier === 'number' && params.inflationMultiplier > 0 ? params.inflationMultiplier : 1.0;
+  const scarcityMultiplier =
+    typeof params.scarcityMultiplier === 'number' && params.scarcityMultiplier > 0 ? params.scarcityMultiplier : 1.0;
+  const rankMultiplier =
+    typeof params.rankMultiplier === 'number' && params.rankMultiplier > 0 ? params.rankMultiplier : 1.0;
+  const currentKeys = Math.max(0, Math.floor(params.currentKeys ?? 0));
+
+  // Valor bruto de divórcio Soulmate (10 chaves) deste personagem considerando seu rank e inflação
+  const soulmateDivorce = calculateDivorceRefund(params.baseRarity, 10, {
+    isSoulmate: true,
+    inflationMultiplier,
+    rankMultiplier,
+  });
+
+  // Base de referência para 4 cotas: nunca inferior ao valor bruto de divórcio Soulmate ajustado pela escassez
+  // Garante que mesmo na compra inicial de 4 cotas (casamento) o preço supere o valor máximo de divórcio.
+  const referenceDynamicPrice = Math.max(
+    params.baseDynamicPrice,
+    Math.round(soulmateDivorce.rawValue * scarcityMultiplier)
+  );
+  const baseCotaPrice = Math.ceil(referenceDynamicPrice / 4);
+
+  if (!params.isOwner) {
+    return {
+      dynamicPrice: referenceDynamicPrice,
+      cotaPrice: baseCotaPrice,
+      baseCotaPrice,
+      discountPercent: 0,
+      keyProgressionWeight: 1.0,
+    };
+  }
+
+  const keyIdx = Math.max(
+    0,
+    Math.min(MARRIED_KEY_PROGRESSION_WEIGHTS.length - 1, Math.max(1, currentKeys) - 1)
+  );
+  const weight = MARRIED_KEY_PROGRESSION_WEIGHTS[keyIdx];
+  const marriedKeyDynamicPrice = Math.round(referenceDynamicPrice * weight);
+  const marriedCotaPrice = Math.ceil(marriedKeyDynamicPrice / 4);
+  const discountPercent = weight < 1.0 ? Math.round((1 - weight) * 100) : 0;
+
+  return {
+    dynamicPrice: marriedKeyDynamicPrice,
+    cotaPrice: marriedCotaPrice,
+    baseCotaPrice,
+    discountPercent,
+    keyProgressionWeight: weight,
+  };
 }
 
 export interface RollBonuses {
@@ -235,16 +316,19 @@ export function calculateDivorceRefund(
     }
   }
 
+  const rarityBase = RARITY_DIVORCE_VALUES[baseRarity] ?? 50;
   const baseValue = isSoulmate
-    ? (SOULMATE_DIVORCE_VALUES[baseRarity] ?? 450000)
-    : (RARITY_DIVORCE_VALUES[baseRarity] ?? 50);
+    ? (SOULMATE_DIVORCE_VALUES[baseRarity] ?? 315000)
+    : rarityBase;
 
-  const bonusPerKey = isSoulmate
-    ? SOULMATE_KEY_KAKERA_BONUS
-    : (RARITY_KEY_DIVORCE_BONUS[baseRarity] ?? 500);
-
+  const bonusPerKey = RARITY_KEY_DIVORCE_BONUS[baseRarity] ?? 500;
   const keysBonus = Math.max(0, keys) * bonusPerKey;
-  const rawBeforeInflation = (baseValue + keysBonus) * rankMultiplier;
+
+  // Para Soulmates, o reembolso base de 4 cotas (SOULMATE_DIVORCE_VALUES) não é multiplicado pelo rankMultiplier;
+  // o rankMultiplier incide apenas sobre o valor de divórcio da raridade + bônus de chaves.
+  const rawBeforeInflation = isSoulmate
+    ? baseValue + (rarityBase + keysBonus) * rankMultiplier
+    : (baseValue + keysBonus) * rankMultiplier;
   const rawValue = Math.round(rawBeforeInflation * inflationMultiplier);
 
   // 5% penalty on refund (penalidade arredondada para cima conforme regra de divórcio por rank)

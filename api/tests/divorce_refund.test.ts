@@ -62,27 +62,27 @@ describe('💔 Divorce Refund Calculations (Normal vs Soulmate vs Inflation)', (
     expect(rareRefund.netKakera).toBe(Math.floor(8510 * 0.95)); // 8084
   });
 
-  it('deve conceder reembolso de 4 cotas (Divórcio Dourado) EXCLUSIVAMENTE para Soulmates', () => {
+  it('deve conceder reembolso de 4 cotas (Divórcio Dourado) EXCLUSIVAMENTE para Soulmates sem multiplicar base por rank', () => {
     // COMMON Soulmate (10 keys)
     const commonSoulmate = calculateDivorceRefund('COMMON', 10, { isSoulmate: true });
-    expect(commonSoulmate.baseValue).toBe(315000); // 4 cotas base (-30%)
-    expect(commonSoulmate.keysBonus).toBe(10 * 21000); // 210000
-    expect(commonSoulmate.rawValue).toBe(525000);
-    expect(commonSoulmate.netKakera).toBe(Math.floor(525000 * 0.95)); // 498750
+    expect(commonSoulmate.baseValue).toBe(315000); // 4 cotas base
+    expect(commonSoulmate.keysBonus).toBe(10 * 500); // 5000
+    expect(commonSoulmate.rawValue).toBe(315000 + 50 + 5000); // 320050
+    expect(commonSoulmate.netKakera).toBe(Math.floor(320050 * 0.95)); // 304047
     expect(commonSoulmate.isSoulmate).toBe(true);
 
     // RARE Soulmate (10 keys)
     const rareSoulmate = calculateDivorceRefund('RARE', 10, { isSoulmate: true });
-    expect(rareSoulmate.baseValue).toBe(1260000); // 4 cotas base (-30%)
-    expect(rareSoulmate.keysBonus).toBe(10 * 21000); // 210000
-    expect(rareSoulmate.rawValue).toBe(1470000);
-    expect(rareSoulmate.netKakera).toBe(Math.floor(1470000 * 0.95)); // 1396500
+    expect(rareSoulmate.baseValue).toBe(1260000); // 4 cotas base
+    expect(rareSoulmate.keysBonus).toBe(10 * 5000); // 50000
+    expect(rareSoulmate.rawValue).toBe(1260000 + 350 + 50000); // 1310350
+    expect(rareSoulmate.netKakera).toBe(Math.floor(1310350 * 0.95)); // 1244832
 
     // RARE Soulmate (10 keys) com inflação 1.5906
     const rareSoulmateInflated = calculateDivorceRefund('RARE', 10, { isSoulmate: true, inflationMultiplier: 1.5906 });
-    expect(rareSoulmateInflated.rawBeforeInflation).toBe(1470000);
-    expect(rareSoulmateInflated.rawValue).toBe(Math.round(1470000 * 1.5906)); // 2338182
-    expect(rareSoulmateInflated.netKakera).toBe(Math.floor(2338182 * 0.95)); // 2221272
+    expect(rareSoulmateInflated.rawBeforeInflation).toBe(1310350);
+    expect(rareSoulmateInflated.rawValue).toBe(Math.round(1310350 * 1.5906)); // 2084243
+    expect(rareSoulmateInflated.netKakera).toBe(Math.floor(2084243 * 0.95)); // 1980030
   });
 
   it('deve suportar chamada legada com boolean isSoulmate', () => {
@@ -92,6 +92,6 @@ describe('💔 Divorce Refund Calculations (Normal vs Soulmate vs Inflation)', (
 
     const resSm = calculateDivorceRefund('RARE', 10, true);
     expect(resSm.baseValue).toBe(1260000);
-    expect(resSm.netKakera).toBe(1396500);
+    expect(resSm.netKakera).toBe(1244832);
   });
 });
