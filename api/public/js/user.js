@@ -1679,10 +1679,15 @@ function createPrivateHaremCard(entry, options = {}) {
       ${rarity.emoji} ${rarity.label}
     </div>`;
 
+  const lockBadgeHtml = (entry.isLocked || entry.collection?.isLocked)
+    ? `<div class="badge-locked" style="position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.75); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; z-index: 2;" title="${entry.isLocked ? 'Personagem bloqueado contra divórcio e anúncios' : 'Coleção bloqueada contra divórcio e anúncios'}">🔒</div>`
+    : '';
+
   if (isMythic) {
     card.innerHTML = `
       <div class="card-img-wrapper" style="cursor: pointer;" onclick="openWaifuPreview('${char.id}')" title="Clique para ver detalhes e fotos">
         <img decoding="async" src="${char.imageUrl || '/media/characters/default.jpg'}" alt="${escapeHtml(char.name)}" onerror="handleImgError(this)" loading="lazy">
+        ${lockBadgeHtml}
       </div>
       <div class="card-info">
         <div class="card-name" style="cursor: pointer;" onclick="openWaifuPreview('${char.id}')" title="${escapeHtml(char.name)}">${escapeHtml(char.name)}</div>
@@ -1699,6 +1704,7 @@ function createPrivateHaremCard(entry, options = {}) {
     card.innerHTML = `
       <div class="card-img-wrapper" style="cursor: pointer;" onclick="openWaifuPreview('${char.id}')" title="Clique para ver detalhes e fotos">
         <img decoding="async" src="${char.imageUrl || '/media/characters/default.jpg'}" alt="${escapeHtml(char.name)}" onerror="handleImgError(this)" loading="lazy">
+        ${lockBadgeHtml}
       </div>
       <div class="card-info">
         <div class="card-name" style="cursor: pointer;" onclick="openWaifuPreview('${char.id}')" title="${escapeHtml(char.name)}">${escapeHtml(char.name)}</div>
@@ -1716,6 +1722,7 @@ function createPrivateHaremCard(entry, options = {}) {
     card.innerHTML = `
       <div class="card-img-wrapper" style="cursor: pointer;" onclick="openWaifuPreview('${char.id}')" title="Clique para ver detalhes e fotos">
         <img decoding="async" src="${char.imageUrl || '/media/characters/default.jpg'}" alt="${escapeHtml(char.name)}" onerror="handleImgError(this)" loading="lazy">
+        ${lockBadgeHtml}
         ${rarityBadgeHtml}
         ${entry.keys ? `<div class="badge-keys"><span>🔑</span> <span>${entry.keys}</span></div>` : ''}
         ${entry.isFavorite ? `<div class="badge-married" style="background: #ec4899; color: white; top: 8px; right: ${entry.keys ? '56px' : '8px'};">💖</div>` : ''}
@@ -1768,6 +1775,9 @@ function openCardOptionsModal(charId) {
   if (char.isMythic || char.baseRarity === 'MYTHIC' || char.rarity === 'MYTHIC') {
     if (listEl) {
       listEl.innerHTML = `
+        <button class="btn-retro btn-sm" style="width: 100%; border-color: ${entry.isLocked ? '#ef4444' : '#10b981'}; color: ${entry.isLocked ? '#ef4444' : '#10b981'}; font-weight: 800;" onclick="closeModal('modal-card-options'); toggleCharacterLock('${char.id}')">
+          ${entry.isLocked ? '🔓 Desbloquear Personagem' : '🔒 Bloquear Personagem'}
+        </button>
         <button class="btn-retro btn-sm" style="width: 100%; background: #ec4899; color: white; border-color: #db2777;" onclick="closeModal('modal-card-options'); toggleFavorite('${char.id}')">
           💖 ${entry.isFavorite ? 'Desfavoritar' : 'Favoritar'}
         </button>
@@ -1797,8 +1807,13 @@ function openCardOptionsModal(charId) {
   const covetsBtnClass = unseenCovets > 0 ? 'btn-gold' : '';
   const covetsBtnStyle = unseenCovets > 0 ? 'border-color: #f59e0b; font-weight: 800;' : '';
   const isSoulmate = Boolean(entry.isSoulmate || char.isSoulmate || (entry.keys && entry.keys >= 10));
+  const isCardLocked = Boolean(entry.isLocked || entry.collection?.isLocked);
 
   let html = `
+    <!-- Bloqueio (Toggle) -->
+    <button class="btn-retro btn-sm" style="width: 100%; border-color: ${entry.isLocked ? '#ef4444' : '#10b981'}; color: ${entry.isLocked ? '#ef4444' : '#10b981'}; font-weight: 800;" onclick="closeModal('modal-card-options'); toggleCharacterLock('${char.id}')">
+      ${entry.isLocked ? '🔓 Desbloquear Personagem' : '🔒 Bloquear Personagem'}
+    </button>
     <!-- 1. Favoritar -->
     <button class="btn-retro btn-sm" style="width: 100%; background: #ec4899; color: white; border-color: #db2777;" onclick="closeModal('modal-card-options'); toggleFavorite('${char.id}')">
       💖 ${entry.isFavorite ? 'Desfavoritar' : 'Favoritar'}
@@ -1822,13 +1837,25 @@ function openCardOptionsModal(charId) {
       </button>
     `}
     <!-- 5. Vender -->
-    <button class="btn-retro btn-sm btn-gold" style="width: 100%;" data-action="sell">
-      <i class="fas fa-tag"></i> 💰 Vender
-    </button>
+    ${isCardLocked ? `
+      <button class="btn-retro btn-sm" style="width: 100%; opacity: 0.5; cursor: not-allowed;" title="Personagem ou coleção bloqueada" disabled>
+        <i class="fas fa-lock"></i> 🔒 Venda Bloqueada
+      </button>
+    ` : `
+      <button class="btn-retro btn-sm btn-gold" style="width: 100%;" data-action="sell">
+        <i class="fas fa-tag"></i> 💰 Vender
+      </button>
+    `}
     <!-- 6. Divorciar -->
-    <button class="btn-retro btn-sm btn-danger" style="width: 100%;" data-action="divorce">
-      <i class="fas fa-heart-crack"></i> Divorciar
-    </button>
+    ${isCardLocked ? `
+      <button class="btn-retro btn-sm" style="width: 100%; opacity: 0.5; cursor: not-allowed;" title="Personagem ou coleção bloqueada" disabled>
+        <i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado
+      </button>
+    ` : `
+      <button class="btn-retro btn-sm btn-danger" style="width: 100%;" data-action="divorce">
+        <i class="fas fa-heart-crack"></i> Divorciar
+      </button>
+    `}
     <!-- 7. Sugerir Mudança -->
     <button class="btn-retro btn-sm" style="width: 100%;" data-action="suggest">
       <i class="fas fa-lightbulb"></i> Sugerir Alterações
@@ -2048,6 +2075,23 @@ async function toggleCollectionPrivacy(collectionId) {
   }
 }
 
+async function toggleCollectionLock(collectionId) {
+  try {
+    const res = await Api.patch(`/api/web/user/${encodeURIComponent(userPublicId)}/collections/${encodeURIComponent(collectionId)}/lock`, {
+      token: userSessionToken,
+    });
+    if (res?.success) {
+      Api.showToast(res.data?.message || 'Bloqueio da coleção atualizado!', res.data?.isLocked ? '🔒' : '🔓');
+      loadUserData();
+    } else {
+      Api.showToast(res?.error?.message || 'Falha ao atualizar bloqueio da coleção.', '❌');
+    }
+  } catch (err) {
+    Api.showToast('Erro de comunicação ao atualizar bloqueio da pasta.', '❌');
+  }
+}
+window.toggleCollectionLock = toggleCollectionLock;
+
 function renderCollectionsReorderList(collections) {
   const listEl = document.getElementById('collections-reorder-list');
   if (!listEl) return;
@@ -2075,6 +2119,11 @@ function renderCollectionsReorderList(collections) {
     const eyeTitle = isPriv ? 'Coleção Privada (oculta no harém público)' : 'Coleção Pública (visível no harém público)';
     const eyeBtnClass = isPriv ? 'btn-danger' : '';
 
+    const isLocked = Boolean(col.isLocked);
+    const lockIcon = isLocked ? 'fa-lock' : 'fa-lock-open';
+    const lockTitle = isLocked ? 'Coleção Bloqueada (divórcio e anúncios impedidos)' : 'Coleção Desbloqueada';
+    const lockBtnClass = isLocked ? 'btn-danger' : '';
+
     item.innerHTML = `
       <div style="display: flex; align-items: center; gap: 10px; flex: 1; overflow: hidden;">
         <span class="drag-handle" style="cursor: grab; color: var(--text-muted); font-size: 14px;" title="Arraste para reordenar">
@@ -2088,8 +2137,13 @@ function renderCollectionsReorderList(collections) {
           ${col.characterCount || 0} waifus
         </span>
         ${isPriv ? '<span class="badge-tag" style="background: #ef4444; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 6px;"><i class="fas fa-eye-slash"></i> Privada</span>' : ''}
+        ${isLocked ? '<span class="badge-tag" style="background: #ef4444; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 6px;"><i class="fas fa-lock"></i> Bloqueada</span>' : ''}
       </div>
       <div style="display: flex; align-items: center; gap: 6px;">
+        <!-- Botão Cadeado (Bloqueio) -->
+        <button class="btn-retro btn-sm ${lockBtnClass}" style="padding: 4px 8px; font-size: 11px;" onclick="toggleCollectionLock('${col.id}')" title="${lockTitle}">
+          <i class="fas ${lockIcon}"></i>
+        </button>
         <!-- Botão Editar Nome da Pasta -->
         <button class="btn-retro btn-sm" style="padding: 4px 8px; font-size: 11px;" data-action="edit-collection" title="Editar nome da pasta">
           <i class="fas fa-edit"></i>
@@ -2280,8 +2334,12 @@ function renderPrivateHarem(harem) {
             <span style="font-size: 16px; font-weight: 800;">📂 ${escapeHtml(col.name)}</span>
             <span class="badge-tag" style="background: #3b82f6; color: #fff; font-weight: 800;">${allColChars.length} waifus</span>
             ${col.isPrivate ? '<span class="badge-tag" style="background: #ef4444; color: #fff; font-weight: 800;"><i class="fas fa-eye-slash"></i> Privada</span>' : ''}
+            ${col.isLocked ? '<span class="badge-tag" style="background: #ef4444; color: #fff; font-weight: 800;"><i class="fas fa-lock"></i> Bloqueada</span>' : ''}
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button class="btn-retro btn-sm ${col.isLocked ? 'btn-danger' : ''}" onclick="toggleCollectionLock('${col.id}')" title="${col.isLocked ? 'Bloqueada contra divórcio e anúncios' : 'Desbloqueada'}">
+              <i class="fas ${col.isLocked ? 'fa-lock' : 'fa-lock-open'}"></i> ${col.isLocked ? 'Bloqueada' : 'Bloquear'}
+            </button>
             <button class="btn-retro btn-sm btn-primary" data-action="batch-add-collection">
               <i class="fas fa-plus"></i> + Adicionar Personagens
             </button>
@@ -2376,6 +2434,24 @@ async function toggleFavorite(characterId) {
     Api.showToast('Erro de comunicação ao favoritar.', '❌');
   }
 }
+
+async function toggleCharacterLock(characterId) {
+  try {
+    const res = await Api.post(`/api/web/user/${encodeURIComponent(userPublicId)}/lock`, {
+      token: userSessionToken,
+      characterId,
+    });
+    if (res?.success) {
+      Api.showToast(res.data?.message || 'Bloqueio do personagem atualizado!', res.data?.isLocked ? '🔒' : '🔓');
+      loadUserData();
+    } else {
+      Api.showToast(res?.error?.message || 'Falha ao atualizar bloqueio do personagem.', '❌');
+    }
+  } catch (err) {
+    Api.showToast('Erro de comunicação ao atualizar bloqueio do personagem.', '❌');
+  }
+}
+window.toggleCharacterLock = toggleCharacterLock;
 
 function renderPrivateWishlist(wishlist) {
   clearAllCardSlideshows();
@@ -3588,6 +3664,11 @@ async function submitReport() {
 // AÇÕES DO USUÁRIO (DIVÓRCIO, WISHLIST, SUGESTÕES)
 // ========================================================
 async function openDivorceModal(charId, charName) {
+  const entry = haremEntryCache?.get(charId);
+  if (entry && (entry.isLocked || entry.collection?.isLocked)) {
+    Api.showToast('Personagens bloqueados (ou em coleções bloqueadas) não podem ser divorciados.', '🔒');
+    return;
+  }
   pendingDivorceTarget = { id: charId, name: charName };
   const textEl = document.getElementById('divorce-modal-text');
   const amountEl = document.getElementById('divorce-modal-refund-amount');
@@ -5022,8 +5103,19 @@ async function openWaifuPreview(charId, charName, charImg, series, rarity, gende
           actionsEl.appendChild(badgeNotice);
         }
       } else if (isMarriedToMe) {
+        const haremEntry = haremEntryCache?.get(charId) || (userSessionData?.harem || []).find(h => (h.character?.id || h.characterId) === charId);
+        const isEntryLocked = Boolean(haremEntry?.isLocked || haremEntry?.collection?.isLocked);
+
+        // Bloqueio
+        const lockBtn = document.createElement('button');
+        lockBtn.className = 'btn-retro btn-sm';
+        lockBtn.style.cssText = `width: 100%; border-color: ${haremEntry?.isLocked ? '#ef4444' : '#10b981'}; color: ${haremEntry?.isLocked ? '#ef4444' : '#10b981'}; font-weight: 800;`;
+        lockBtn.innerHTML = haremEntry?.isLocked ? '🔓 Desbloquear Personagem' : '🔒 Bloquear Personagem';
+        lockBtn.onclick = () => { closeModal('modal-waifu-preview'); toggleCharacterLock(charId); };
+        actionsEl.appendChild(lockBtn);
+
         // Favoritar
-        const isFav = (userSessionData?.harem || []).some(h => (h.character?.id || h.characterId) === charId && h.isFavorite);
+        const isFav = Boolean(haremEntry?.isFavorite);
         const favBtn = document.createElement('button');
         favBtn.className = 'btn-retro btn-sm';
         favBtn.style.cssText = 'width: 100%; background: #ec4899; color: white; border-color: #db2777; font-weight: 800;';
@@ -5035,16 +5127,30 @@ async function openWaifuPreview(charId, charName, charImg, series, rarity, gende
         const sellBtn = document.createElement('button');
         sellBtn.className = 'btn-retro btn-sm btn-gold';
         sellBtn.style.cssText = 'width: 100%; font-weight: 800;';
-        sellBtn.innerHTML = '<i class="fas fa-tag"></i> 💰 Vender nos Classificados';
-        sellBtn.onclick = () => { closeModal('modal-waifu-preview'); openSellModal(charId, cName, images[0], cSeries); };
+        if (isEntryLocked) {
+          sellBtn.disabled = true;
+          sellBtn.style.opacity = '0.5';
+          sellBtn.style.cursor = 'not-allowed';
+          sellBtn.innerHTML = '<i class="fas fa-lock"></i> 🔒 Venda Bloqueada';
+        } else {
+          sellBtn.innerHTML = '<i class="fas fa-tag"></i> 💰 Vender nos Classificados';
+          sellBtn.onclick = () => { closeModal('modal-waifu-preview'); openSellModal(charId, cName, images[0], cSeries); };
+        }
         actionsEl.appendChild(sellBtn);
 
         // Divorciar
         const divBtn = document.createElement('button');
         divBtn.className = 'btn-retro btn-sm btn-danger';
         divBtn.style.cssText = 'width: 100%; font-weight: 800;';
-        divBtn.innerHTML = '<i class="fas fa-heart-crack"></i> Divorciar';
-        divBtn.onclick = () => { closeModal('modal-waifu-preview'); openDivorceModal(charId, cName); };
+        if (isEntryLocked) {
+          divBtn.disabled = true;
+          divBtn.style.opacity = '0.5';
+          divBtn.style.cursor = 'not-allowed';
+          divBtn.innerHTML = '<i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado';
+        } else {
+          divBtn.innerHTML = '<i class="fas fa-heart-crack"></i> Divorciar';
+          divBtn.onclick = () => { closeModal('modal-waifu-preview'); openDivorceModal(charId, cName); };
+        }
         actionsEl.appendChild(divBtn);
       } else {
         // Não é casada com o usuário autenticado
@@ -5382,6 +5488,10 @@ function navigateToHash(hash) {
 function openSellModal(characterId, characterName, imageUrl, series) {
   const entry = haremEntryCache?.get(characterId);
   const char = entry?.character;
+  if (entry && (entry.isLocked || entry.collection?.isLocked)) {
+    Api.showToast('Personagens bloqueados (ou em coleções bloqueadas) não podem ser anunciados nos classificados.', '🔒');
+    return;
+  }
   if (char && (char.isMythic || char.baseRarity === 'MYTHIC' || char.rarity === 'MYTHIC')) {
     Api.showToast('Personagens Míticos pertencem exclusivamente ao criador e não podem ser anunciados nos classificados.', '⚠️');
     return;
@@ -6184,12 +6294,13 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
     balanceEl.textContent = Number(buyerData?.kakera || 0).toLocaleString('pt-BR');
   }
 
-  // 1. Popula Waifus disponíveis do harém do comprador (exceto Míticos), ordenado por Raridade > Chaves
+  // 1. Popula Waifus disponíveis do harém do comprador (exceto Míticos e Bloqueadas), ordenado por Raridade > Chaves
   const waifusList = document.getElementById('offer-waifus-list');
   const harem = sortHaremCards(
     (buyerData?.harem || []).filter(item => {
       const c = item.character;
-      return !c?.isMythic && c?.rarity !== 'MYTHIC' && c?.baseRarity !== 'MYTHIC';
+      const isLocked = Boolean(item.isLocked || item.collection?.isLocked);
+      return !isLocked && !c?.isMythic && c?.rarity !== 'MYTHIC' && c?.baseRarity !== 'MYTHIC';
     })
   );
 

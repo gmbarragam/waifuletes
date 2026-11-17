@@ -7,6 +7,7 @@ import { MarketService } from '../../services/MarketService.js';
 import { verifyApiKey } from '../../plugins/auth.js';
 import { Gender, Platform } from '@prisma/client';
 import { RollBonuses } from '../../utils/rarityCalculator.js';
+import { withBusinessSpan, userIdAttr } from '../../telemetry.js';
 
 export const privateRollRoutes: FastifyPluginAsync = async (fastify) => {
   const cooldownService = new CooldownService(fastify.redis);
@@ -128,6 +129,64 @@ export const privateRollRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.send(result);
+    },
+  });
+
+  fastify.post('/roll/refund', {
+    schema: {
+      description: 'Estorna rolls de um usuário quando o envio falha ou ocorre erro na entrega',
+      tags: ['Jogo (Privado)'],
+      body: {
+        type: 'object',
+        required: ['userId'],
+        additionalProperties: false,
+        properties: {
+          userId: { type: 'string', maxLength: 64 },
+          amount: { type: 'number', minimum: 1, maximum: 50, default: 1 },
+          extraMaxRolls: { type: 'number', minimum: 0, maximum: 500 },
+          reason: { type: 'string', maxLength: 256 },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { userId, amount = 1, extraMaxRolls = 0, reason } = request.body as {
+        userId: string;
+        amount?: number;
+        extraMaxRolls?: number;
+        reason?: string;
+      };
+
+      return withBusinessSpan(
+        'roll.refund',
+        {
+          'waifu.user.id': userIdAttr(userId),
+          'waifu.refund.amount': amount,
+          'waifu.refund.reason': reason || 'media_send_failed',
+        },
+        async () => {
+          for (let i = 0; i < amount; i++) {
+            await cooldownService.refundRoll(userId, extraMaxRolls);
+          }
+
+          const rollsState = await cooldownService.getUserRolls(userId, extraMaxRolls);
+
+          fastify.log.warn(
+            { userId, amount, reason, availableRolls: rollsState.availableRolls },
+            'Rolls refunded to user'
+          );
+
+          return reply.send({
+            success: true,
+            data: {
+              userId,
+              refundedAmount: amount,
+              availableRolls: rollsState.availableRolls,
+              maxRolls: rollsState.maxRolls,
+              reason: reason || 'media_send_failed',
+            },
+          });
+        }
+      );
     },
   });
 };

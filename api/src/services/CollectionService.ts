@@ -54,6 +54,7 @@ export class CollectionService {
       name: col.name,
       description: col.description,
       isPrivate: col.isPrivate,
+      isLocked: col.isLocked,
       position: col.position,
       createdAt: col.createdAt,
       updatedAt: col.updatedAt,
@@ -66,6 +67,7 @@ export class CollectionService {
         gender: e.character.gender,
         keys: e.keys,
         isFavorite: e.isFavorite,
+        isLocked: e.isLocked,
         pinnedPhoto: e.pinnedPhoto || null,
         imageUrl: this.resolveCardImageUrl(e.character.id, e.character.imageUrls, e.pinnedPhoto),
         imageUrls: e.character.imageUrls.map((img) => this.characterService.formatImageUrl(e.character.id, img)),
@@ -440,6 +442,43 @@ export class CollectionService {
       message: updated.isPrivate
         ? `A coleção "${updated.name}" agora é privada e não será exibida no harém público.`
         : `A coleção "${updated.name}" agora é pública.`,
+    };
+  }
+
+  async setCollectionLock(userId: string, identifier: string, isLocked?: boolean) {
+    if (!identifier) {
+      throw new DomainError('INVALID_IDENTIFIER', 'Informe o ID ou nome da coleção.', 400);
+    }
+
+    const collection = await this.prisma.userCollection.findFirst({
+      where: {
+        userId,
+        OR: [
+          { id: identifier },
+          { name: { equals: identifier, mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    if (!collection) {
+      throw new DomainError('COLLECTION_NOT_FOUND', 'Coleção não encontrada.', 404);
+    }
+
+    const nextState = typeof isLocked === 'boolean' ? isLocked : !collection.isLocked;
+
+    const updated = await this.prisma.userCollection.update({
+      where: { id: collection.id },
+      data: { isLocked: nextState },
+    });
+
+    return {
+      success: true,
+      id: updated.id,
+      name: updated.name,
+      isLocked: updated.isLocked,
+      message: updated.isLocked
+        ? `🔒 Coleção "${updated.name}" bloqueada!`
+        : `🔓 Coleção "${updated.name}" desbloqueada!`,
     };
   }
 }

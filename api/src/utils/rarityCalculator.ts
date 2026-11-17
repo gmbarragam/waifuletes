@@ -247,8 +247,8 @@ export function calculateDivorceRefund(
   const rawBeforeInflation = (baseValue + keysBonus) * rankMultiplier;
   const rawValue = Math.round(rawBeforeInflation * inflationMultiplier);
 
-  // 5% penalty on refund (arredondado para cima conforme regra de divórcio por rank)
-  const fullNetKakera = Math.ceil(rawValue * (1 - DIVORCE_PENALTY_RATE));
+  // 5% penalty on refund (penalidade arredondada para cima conforme regra de divórcio por rank)
+  const fullNetKakera = Math.floor(rawValue * (1 - DIVORCE_PENALTY_RATE));
   // Aplicação do Soft Limite diário por raridade
   const netKakera = Math.max(1, Math.floor(fullNetKakera * dailyDivorceRate));
 

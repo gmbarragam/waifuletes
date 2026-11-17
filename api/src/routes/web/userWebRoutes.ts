@@ -590,6 +590,55 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * Alterna o bloqueio de uma coleção contra divórcio e classificados
+   */
+  fastify.patch('/api/web/user/:publicId/collections/:collectionId/lock', {
+    schema: {
+      description: 'Alterna o bloqueio de uma coleção (bloqueada ou desbloqueada)',
+      tags: ['Usuário (Web)'],
+      params: {
+        type: 'object',
+        required: ['publicId', 'collectionId'],
+        properties: {
+          publicId: { type: 'string' },
+          collectionId: { type: 'string' },
+        },
+      },
+      body: {
+        type: 'object',
+        required: ['token'],
+        additionalProperties: false,
+        properties: {
+          token: { type: 'string' },
+          isLocked: { type: 'boolean' },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { publicId, collectionId } = request.params as { publicId: string; collectionId: string };
+      const { token, isLocked } = request.body as { token: string; isLocked?: boolean };
+
+      const session = publicId === 'token-session'
+        ? await webSessionService.validateTokenOnly(token)
+        : await webSessionService.validateUserSession(publicId, token);
+
+      if (!session.valid || !session.userId) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Sessão web expirada ou inválida.' },
+        });
+      }
+
+      const result = await collectionService.setCollectionLock(session.userId, collectionId, isLocked);
+
+      return reply.send({
+        success: true,
+        data: result,
+      });
+    },
+  });
+
+  /**
    * Retorna as fotos disponíveis para escolha (fotos oficiais + foto de casamento)
    */
   fastify.get('/api/web/user/:publicId/harem/:characterId/photos', {
@@ -1171,6 +1220,50 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const result = await haremService.setFavorite(session.userId, characterId);
+      if (!result.success) {
+        return reply.status(400).send(result);
+      }
+
+      return reply.send(result);
+    },
+  });
+
+  /**
+   * Alterna status de bloqueio para um personagem pertencente ao harém
+   */
+  fastify.post('/api/web/user/:publicId/lock', {
+    schema: {
+      description: 'Alterna status de bloqueio de um personagem pertencente ao harém contra divórcio e anúncios',
+      tags: ['Usuário (Web)'],
+      params: {
+        type: 'object',
+        required: ['publicId'],
+        properties: { publicId: { type: 'string' } },
+      },
+      body: {
+        type: 'object',
+        required: ['token', 'characterId'],
+        properties: {
+          token: { type: 'string' },
+          characterId: { type: 'string' },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { publicId } = request.params as { publicId: string };
+      const { token, characterId } = request.body as { token: string; characterId: string };
+
+      const session = publicId === 'token-session'
+        ? await webSessionService.validateTokenOnly(token)
+        : await webSessionService.validateUserSession(publicId, token);
+      if (!session.valid || !session.userId) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Sessão web expirada ou inválida. Gere um novo link no WhatsApp.' },
+        });
+      }
+
+      const result = await haremService.toggleLock(session.userId, characterId);
       if (!result.success) {
         return reply.status(400).send(result);
       }

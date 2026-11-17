@@ -116,11 +116,19 @@ export class MarketService {
     // 1. Checa se o usuário realmente tem o personagem no harém
     const haremEntry = await this.prisma.haremEntry.findFirst({
       where: { userId, characterId },
-      include: { character: true },
+      include: { character: true, collection: true },
     });
 
     if (!haremEntry) {
       throw new DomainError('NOT_IN_HAREM', 'Você não possui este personagem no seu harém.');
+    }
+
+    if (haremEntry.isLocked) {
+      throw new DomainError('CANNOT_LIST_LOCKED', 'Personagens bloqueados não podem ser anunciados nos classificados. Desbloqueie-o nas opções do card.');
+    }
+
+    if (haremEntry.collection?.isLocked) {
+      throw new DomainError('CANNOT_LIST_LOCKED', `Este personagem pertence à coleção "${haremEntry.collection.name}", que está bloqueada. Desbloqueie a coleção para anunciá-lo.`);
     }
 
     if (haremEntry.character.isMythic || (haremEntry.character as any).baseRarity === 'MYTHIC') {
@@ -672,12 +680,12 @@ export class MarketService {
       }
     }
 
-    // Se ofertou waifus, valida se o comprador tem todas elas no harém e não são míticas
+    // Se ofertou waifus, valida se o comprador tem todas elas no harém e não são míticas nem estão bloqueadas
     const waifuIds = data.offeredItems?.waifuIds || [];
     if (waifuIds.length > 0) {
       const owned = await this.prisma.haremEntry.findMany({
         where: { userId: buyerId, characterId: { in: waifuIds } },
-        include: { character: true },
+        include: { character: true, collection: true },
       });
       if (owned.length !== waifuIds.length) {
         throw new DomainError('MISSING_WAIFUS', 'Você não possui todos os personagens ofertados no seu harém.');
@@ -685,6 +693,10 @@ export class MarketService {
       const hasMythic = owned.some((o) => o.character.isMythic || (o.character as any).baseRarity === 'MYTHIC');
       if (hasMythic) {
         throw new DomainError('CANNOT_OFFER_MYTHIC', 'Personagens Míticos pertencem exclusivamente ao seu criador e não podem ser ofertados em negociações.');
+      }
+      const hasLocked = owned.some((o) => o.isLocked || o.collection?.isLocked);
+      if (hasLocked) {
+        throw new DomainError('CANNOT_OFFER_LOCKED', 'Personagens bloqueados (ou em coleções bloqueadas) não podem ser ofertados em negociações.');
       }
     }
 
@@ -1280,7 +1292,7 @@ export class MarketService {
           throw new DomainError('LISTING_NOT_ACTIVE', 'O anúncio foi concluído ou cancelado durante o processamento.');
         }
 
-        // Passa a waifu anunciada do vendedor para o comprador (remove da coleção do antigo dono e reseta favorito).
+        // Passa a waifu anunciada do vendedor para o comprador (remove da coleção do antigo dono, reseta favorito e chaves para 1).
         // Condicionado ao dono atual: se o vendedor perdeu o personagem no meio do caminho, aborta.
         const movedListed = await tx.haremEntry.updateMany({
           where: { characterId: listing.characterId, userId: sellerId },
@@ -1288,11 +1300,17 @@ export class MarketService {
             userId: offer.buyerId,
             collectionId: null,
             isFavorite: false,
+            keys: 1,
           },
         });
         if (movedListed.count !== 1) {
           throw new DomainError('SELLER_LOST_WAIFU', 'O vendedor não possui mais o personagem anunciado.');
         }
+
+        // Reseta qualquer vínculo de Soulmate com o antigo dono
+        await tx.soulmate.deleteMany({
+          where: { characterId: listing.characterId },
+        });
 
         // Se o comprador tiver cobiçado este personagem anunciado, remove o covet dele
         await tx.characterCovet.deleteMany({
@@ -1305,7 +1323,7 @@ export class MarketService {
           data: { ownerId: offer.buyerId },
         });
 
-        // Passa as waifus ofertadas do comprador para o vendedor (remove da coleção do comprador e reseta favorito)
+        // Passa as waifus ofertadas do comprador para o vendedor (remove da coleção do comprador, reseta favorito e chaves para 1)
         for (const wId of waifuIds) {
           const movedOffered = await tx.haremEntry.updateMany({
             where: { characterId: wId, userId: offer.buyerId },
@@ -1313,11 +1331,17 @@ export class MarketService {
               userId: sellerId,
               collectionId: null,
               isFavorite: false,
+              keys: 1,
             },
           });
           if (movedOffered.count !== 1) {
             throw new DomainError('BUYER_LOST_WAIFU', 'O proponente não possui mais uma das waifus ofertadas.');
           }
+
+          // Reseta qualquer vínculo de Soulmate prévio da waifu ofertada
+          await tx.soulmate.deleteMany({
+            where: { characterId: wId },
+          });
 
           // Atualiza covets das waifus ofertadas para o novo dono
           await tx.characterCovet.deleteMany({
@@ -1887,14 +1911,19 @@ export class MarketService {
 
     // 5. Executa a reversão atômica no banco de dados
     await this.prisma.$transaction(async (tx) => {
-      // Devolve o personagem anunciado para o vendedor original
+      // Devolve o personagem anunciado para o vendedor original (com chaves resetadas)
       await tx.haremEntry.update({
         where: { characterId: charId },
         data: {
           userId: offer.sellerId,
           collectionId: null,
           isFavorite: false,
+          keys: 1,
         },
+      });
+
+      await tx.soulmate.deleteMany({
+        where: { characterId: charId },
       });
 
       await tx.characterCovet.updateMany({
@@ -1910,7 +1939,12 @@ export class MarketService {
             userId: offer.buyerId,
             collectionId: null,
             isFavorite: false,
+            keys: 1,
           },
+        });
+
+        await tx.soulmate.deleteMany({
+          where: { characterId: wId },
         });
 
         await tx.characterCovet.updateMany({

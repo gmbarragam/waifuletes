@@ -260,11 +260,20 @@ export class DivorceService {
       },
       include: {
         character: true,
+        collection: true,
       },
     });
 
     if (!haremEntry) {
       throw new DomainError('CHARACTER_NOT_IN_HAREM', 'Você não possui este personagem no seu harém.');
+    }
+
+    if (haremEntry.isLocked) {
+      throw new DomainError('CHARACTER_LOCKED', 'Este personagem está bloqueado contra divórcio. Desbloqueie-o nas opções do card.');
+    }
+
+    if (haremEntry.collection?.isLocked) {
+      throw new DomainError('COLLECTION_LOCKED', `Este personagem pertence à coleção "${haremEntry.collection.name}", que está bloqueada contra divórcio.`);
     }
 
     const { character, keys } = haremEntry;
@@ -346,6 +355,7 @@ export class DivorceService {
       },
       include: {
         character: true,
+        collection: true,
       },
     });
 
@@ -355,6 +365,26 @@ export class DivorceService {
         error: {
           code: 'CHARACTER_NOT_IN_HAREM',
           message: 'Você não possui este personagem no seu harém.',
+        },
+      };
+    }
+
+    if (haremEntry.isLocked) {
+      return {
+        success: false,
+        error: {
+          code: 'CHARACTER_LOCKED',
+          message: 'Este personagem está bloqueado contra divórcio. Desbloqueie-o nas opções do card.',
+        },
+      };
+    }
+
+    if (haremEntry.collection?.isLocked) {
+      return {
+        success: false,
+        error: {
+          code: 'COLLECTION_LOCKED',
+          message: `Este personagem pertence à coleção "${haremEntry.collection.name}", que está bloqueada contra divórcio.`,
         },
       };
     }

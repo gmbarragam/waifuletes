@@ -167,6 +167,7 @@ model HaremEntry {
   claimedInGroup String
   keys           Int             @default(1)
   isFavorite     Boolean         @default(false)
+  isLocked       Boolean         @default(false) @map("is_locked")
   note           String?
   collectionId   String?         @map("collection_id")
   pinnedPhoto    String?         @map("pinned_photo")
@@ -188,6 +189,7 @@ model UserCollection {
   name        String
   description String?
   isPrivate   Boolean      @default(false) @map("is_private")
+  isLocked    Boolean      @default(false) @map("is_locked")
   position    Int          @default(0)
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")

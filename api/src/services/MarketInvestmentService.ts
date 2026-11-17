@@ -2,6 +2,7 @@ import { PrismaClient, Rarity, KakeraReason, OfferStatus } from '@prisma/client'
 import { Redis } from 'ioredis';
 import { DomainError } from '../errors/DomainError.js';
 import { CharacterService } from './CharacterService.js';
+import { config, ravenaMarketHeaders } from '../config.js';
 
 export const BASE_DAILY_ZINTHOS = 21000;
 
@@ -408,7 +409,7 @@ export class MarketInvestmentService {
     }
 
     // 5. Transação Atômica no PostgreSQL
-    return await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       if (!isOwner) {
         // Re-verificação anti race-condition de casamento simultâneo para personagens livres
         const claimCheck = await tx.haremEntry.findFirst({
@@ -661,6 +662,29 @@ export class MarketInvestmentService {
         };
       }
     });
+
+    if (result.acquired && character.baseRarity === 'LEGENDARY') {
+      fetch(`${config.RAVENA_API_URL}/api/market/notify-legendary-marriage`, {
+        method: 'POST',
+        headers: ravenaMarketHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          character: {
+            id: character.id,
+            name: character.name,
+            series: character.series,
+            rarity: character.baseRarity,
+            imageUrl: quote.character.imageUrl,
+          },
+          userName: user.name || params.userId,
+          acquisitionType: 'cotas',
+        }),
+        signal: AbortSignal.timeout(5000),
+      }).catch((err) => {
+        console.error('Falha ao notificar casamento lendário por cotas na Ravena:', err?.message || err);
+      });
+    }
+
+    return result;
   }
 
   /**

@@ -82,10 +82,11 @@ export class HaremService {
           claimedInGroup: e.claimedInGroup,
           keys: e.keys,
           isFavorite: e.isFavorite,
+          isLocked: e.isLocked,
           note: e.note,
           collectionId: e.collectionId || null,
           collection: e.collection
-            ? { id: e.collection.id, name: e.collection.name, isPrivate: e.collection.isPrivate }
+            ? { id: e.collection.id, name: e.collection.name, isPrivate: e.collection.isPrivate, isLocked: e.collection.isLocked }
             : null,
           pinnedPhoto: e.pinnedPhoto || null,
           isSoulmate: (e.keys ?? 1) >= 10 || soulmateSet.has(e.characterId),
@@ -338,6 +339,43 @@ export class HaremService {
     return {
       success: true,
       data: updated,
+    };
+  }
+
+  async toggleLock(userId: string, characterId: string) {
+    const entry = await this.prisma.haremEntry.findUnique({
+      where: {
+        userId_characterId: {
+          userId,
+          characterId,
+        },
+      },
+      include: { character: true },
+    });
+
+    if (!entry) {
+      return {
+        success: false,
+        error: { code: 'NOT_IN_HAREM', message: 'Personagem não encontrado no seu harém.' },
+      };
+    }
+
+    const nextState = !entry.isLocked;
+
+    await this.prisma.haremEntry.update({
+      where: { id: entry.id },
+      data: { isLocked: nextState },
+    });
+
+    return {
+      success: true,
+      data: {
+        isLocked: nextState,
+        characterId: entry.characterId,
+        message: nextState
+          ? `🔒 ${entry.character.name} foi bloqueada com sucesso!`
+          : `🔓 ${entry.character.name} foi desbloqueada com sucesso!`,
+      },
     };
   }
 
