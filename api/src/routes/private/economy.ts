@@ -17,7 +17,7 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/internal/economy/summary', {
     schema: {
       description:
-        'Resumo agregado da economia de Zinthos para o painel da Ravena (fluxos por hora e motivo, retrato dos saldos e quintos). Sem dados por jogador.',
+        'Resumo agregado da economia de Zinthos para o painel da Ravena (fluxos por hora e motivo, retrato dos saldos e quintos, ciclo da alma gêmea por hora). Sem dados por jogador.',
       tags: ['Kakera & Economia (Privado)'],
       querystring: {
         type: 'object',
@@ -59,6 +59,7 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
           const summary = await economyService.getSummary(from, to, now, { received: received === 1, balances: balances !== 0 });
           setAttrs({
             'waifu.economy.flow_rows': summary.ledger.flows.length,
+            'waifu.economy.soulmate_divorces': summary.soulmateCycle.reduce((s, h) => s + h.divorces, 0),
             'waifu.economy.holders': summary.balances?.holders,
           });
           return summary;
