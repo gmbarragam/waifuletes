@@ -93,6 +93,7 @@ export interface EconomySummary {
   generatedAt: number;
   window: { from: number; to: number };
   ledger: { available: boolean; flows: EconomyFlow[] };
+  /** null quando pedido com balances=0 (pedaços históricos da carga inicial). */
   balances: {
     total: number;
     totalAtWindowEnd: number;
@@ -102,7 +103,7 @@ export interface EconomySummary {
     p90: number | null;
     top10Share: number | null;
     quintiles: EconomyQuintile[];
-  };
+  } | null;
   receivedByQuintile: EconomyReceivedQuintile[];
 }
 
@@ -119,11 +120,14 @@ export class EconomySummaryService {
     from: number,
     to: number,
     now: number = Date.now(),
-    opts: { received?: boolean } = {}
+    opts: { received?: boolean; balances?: boolean } = {}
   ): Promise<EconomySummary> {
+    // balances=false pula o retrato (saldos, quintos, totalAtWindowEnd) e, como as faixas de
+    // receivedByQuintile vêm do mesmo retrato, também receivedByQuintile (vem []).
+    const includeBalances = opts.balances !== false;
     const fromTs = tsFromMs(from);
     const toTs = tsFromMs(to);
-    const includeReceived = Boolean(opts.received) && to - from <= RECEIVED_MAX_WINDOW_MS;
+    const includeReceived = includeBalances && Boolean(opts.received) && to - from <= RECEIVED_MAX_WINDOW_MS;
 
     // Fluxos do extrato por hora (UTC) e motivo.
     const flowsQuery = this.prisma.$queryRaw<
@@ -211,10 +215,14 @@ export class EconomySummaryService {
     `;
 
     // Um único retrato (REPEATABLE READ): as faixas de balances e de receivedByQuintile batem entre si.
-    const [flowRows, totalsRows, holdersRows, quintileRows, receivedRows] = await this.prisma.$transaction(
-      [flowsQuery, totalsQuery, holdersQuery, quintilesQuery, includeReceived ? receivedQuery : this.prisma.$queryRaw`SELECT 1`] as any,
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }
-    ) as [any[], any[], any[], any[], any[]];
+    // Sem o retrato, só a consulta dos fluxos roda (os demais $queryRaw não executados nunca vão ao banco).
+    const queries: any[] = [flowsQuery];
+    if (includeBalances) queries.push(totalsQuery, holdersQuery, quintilesQuery);
+    if (includeReceived) queries.push(receivedQuery);
+    const results = (await this.prisma.$transaction(queries as any, {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    })) as any[][];
+    const [flowRows, totalsRows = [], holdersRows = [], quintileRows = [], receivedRows = []] = results;
 
     const flows: EconomyFlow[] = flowRows.map((r) => ({
       hour: num(r.hour),
@@ -263,16 +271,18 @@ export class EconomySummaryService {
       generatedAt: now,
       window: { from, to },
       ledger: { available: true, flows },
-      balances: {
-        total: num(totals.total),
-        totalAtWindowEnd: num(totals.total) - num(totals.after_to),
-        holders,
-        accounts: num(totals.accounts),
-        p50: holders > 0 ? numOrNull(hs.p50) : null,
-        p90: holders > 0 ? numOrNull(hs.p90) : null,
-        top10Share: mass > 0 ? num(hs.top_mass) / mass : null,
-        quintiles,
-      },
+      balances: includeBalances
+        ? {
+            total: num(totals.total),
+            totalAtWindowEnd: num(totals.total) - num(totals.after_to),
+            holders,
+            accounts: num(totals.accounts),
+            p50: holders > 0 ? numOrNull(hs.p50) : null,
+            p90: holders > 0 ? numOrNull(hs.p90) : null,
+            top10Share: mass > 0 ? num(hs.top_mass) / mass : null,
+            quintiles,
+          }
+        : null,
       receivedByQuintile,
     };
   }
