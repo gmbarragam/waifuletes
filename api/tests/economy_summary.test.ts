@@ -33,6 +33,7 @@ const FLOW_BASE = Date.UTC(2026, 0, 10, 12, 0, 0);
 const RECV_BASE = Date.UTC(2026, 1, 1, 0, 0, 0);
 const OLD_TS = Date.UTC(2020, 5, 1, 3, 30, 0);
 const SPLIT_BASE = Date.UTC(2026, 2, 1, 9, 0, 0);
+const SOUL_BASE = Date.UTC(2026, 3, 1, 10, 0, 0);
 
 const hid = (i: number) => `econ_h${String(i).padStart(2, '0')}`;
 
@@ -399,6 +400,89 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       expect(longer.json().receivedByQuintile).toEqual([]);
       const full = await get(`/internal/economy/summary?from=0&to=${Date.now()}&received=1`);
       expect(full.json().receivedByQuintile).toEqual([]);
+    });
+  });
+
+  describe('ciclo da alma gêmea (soulmateCycle)', () => {
+    const H = SOUL_BASE;
+    const MIN = 60_000;
+    let ids: string[] = [];
+
+    beforeAll(async () => {
+      const prisma = server.prisma;
+      const buy = (userId: string, amount: number, characterId: string, at: number, type = 'MARRIED_SHARE_PURCHASE') => ({
+        userId,
+        amount: -amount,
+        reason: 'MARKET_BUY' as any,
+        createdAt: new Date(at),
+        metadata: { type, characterId, sharesBought: 1 },
+      });
+      const divorce = (userId: string, amount: number, characterId: string, at: number, isSoulmate: boolean) => ({
+        userId,
+        amount,
+        reason: 'DIVORCE' as any,
+        createdAt: new Date(at),
+        metadata: { characterId, isSoulmate },
+      });
+      const data = [
+        // h30 / soul_a: cotas 100 + 200 = 300 > pago 250. Compra de investimento e cota de outro personagem não contam.
+        buy(hid(30), 100, 'soul_a', H - 2 * DAY),
+        buy(hid(30), 200, 'soul_a', H - DAY),
+        buy(hid(30), 999, 'soul_a', H - DAY, 'INVESTMENT_SHARE_PURCHASE'),
+        buy(hid(30), 500, 'soul_b', H - DAY),
+        divorce(hid(30), 250, 'soul_a', H + 10 * MIN, true),
+        // h31 / soul_b: cotas 100 < pago 400 (retorno 4x).
+        buy(hid(31), 100, 'soul_b', H - 3 * HOUR),
+        divorce(hid(31), 400, 'soul_b', H + 20 * MIN, true),
+        // h31 / soul_b, novo ciclo: só a cota comprada depois do divórcio anterior conta (50 < 60).
+        buy(hid(31), 50, 'soul_b', H + 30 * MIN),
+        divorce(hid(31), 60, 'soul_b', H + HOUR + 5 * MIN, true),
+        // h32: divórcio que não é de alma gêmea é ignorado (mesmo com cotas).
+        buy(hid(32), 100, 'soul_c', H - HOUR),
+        divorce(hid(32), 30, 'soul_c', H + 15 * MIN, false),
+        // h33: alma gêmea sem cotas compradas (custo 0 conta como acima do custo; fora do maxReturn).
+        divorce(hid(33), 80, 'soul_d', H + HOUR + 10 * MIN, true),
+        // h34: mesmo personagem de h30, mas as cotas de h30 não contam para outro jogador.
+        divorce(hid(34), 10, 'soul_a', H + HOUR + 20 * MIN, true),
+      ];
+      const rows = await prisma.$transaction(data.map((d: any) => prisma.kakeraTransaction.create({ data: d })));
+      ids = rows.map((r: any) => r.id);
+    });
+
+    afterAll(async () => {
+      if (ids.length) await server.prisma.kakeraTransaction.deleteMany({ where: { id: { in: ids } } });
+    });
+
+    const hourH = { hour: H, divorces: 2, paid: 650, quotaCost: 400, aboveCost: 1, maxReturn: 4 };
+    const hourH1 = { hour: H + HOUR, divorces: 3, paid: 150, quotaCost: 50, aboveCost: 3, maxReturn: 1.2 };
+
+    it('agrega por hora: divórcios, pago, custo das cotas, acima do custo e maior retorno', async () => {
+      const res = await get(`/internal/economy/summary?from=${H}&to=${H + 2 * HOUR}`);
+      expect(res.statusCode).toBe(200);
+      const cycle = res.json().soulmateCycle;
+      expect(cycle).toHaveLength(2);
+      expect(cycle[0]).toEqual({ ...hourH, maxReturn: expect.closeTo(4, 10) });
+      expect(cycle[1]).toEqual({ ...hourH1, maxReturn: expect.closeTo(1.2, 10) });
+    });
+
+    it('divórcio anterior fora da janela ainda limita o ciclo', async () => {
+      const res = await get(`/internal/economy/summary?from=${H + HOUR}&to=${H + 2 * HOUR}`);
+      const cycle = res.json().soulmateCycle;
+      expect(cycle).toEqual([{ ...hourH1, maxReturn: expect.closeTo(1.2, 10) }]);
+    });
+
+    it('também vem com balances=0', async () => {
+      const res = await get(`/internal/economy/summary?from=${H}&to=${H + 2 * HOUR}&balances=0`);
+      expect(res.json().balances).toBeNull();
+      expect(res.json().soulmateCycle).toHaveLength(2);
+    });
+
+    it('janela sem divórcio de alma gêmea: []', async () => {
+      for (const qs of [`from=${FLOW_BASE}&to=${FLOW_BASE + 2 * HOUR}`, `from=${H - DAY}&to=${H}&balances=0`]) {
+        const res = await get(`/internal/economy/summary?${qs}`);
+        expect(res.statusCode).toBe(200);
+        expect(res.json().soulmateCycle).toEqual([]);
+      }
     });
   });
 

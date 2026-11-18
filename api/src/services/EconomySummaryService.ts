@@ -85,6 +85,24 @@ export interface EconomyReceivedQuintile {
   receivedMedian: number | null;
 }
 
+/**
+ * Ciclo da alma gêmea por hora (UTC): divórcios de almas gêmeas na janela e quanto o jogador gastou
+ * comprando as próprias cotas daquele personagem (MARKET_BUY com metadata.type = MARRIED_SHARE_PURCHASE)
+ * desde o divórcio anterior do mesmo personagem (ou desde sempre, no primeiro ciclo).
+ * - paid: soma do que os divórcios pagaram;
+ * - quotaCost: soma do custo das cotas do ciclo de cada divórcio;
+ * - aboveCost: divórcios que pagaram pelo menos o custo das cotas (custo 0 conta como acima);
+ * - maxReturn: maior paid/quotaCost entre os divórcios com custo > 0 (null se nenhum).
+ */
+export interface EconomySoulmateCycleHour {
+  hour: number;
+  divorces: number;
+  paid: number;
+  quotaCost: number;
+  aboveCost: number;
+  maxReturn: number | null;
+}
+
 export interface EconomySummary {
   currency: 'zinthos';
   schemaVersion: number;
@@ -103,6 +121,8 @@ export interface EconomySummary {
     quintiles: EconomyQuintile[];
   } | null;
   receivedByQuintile: EconomyReceivedQuintile[];
+  /** Sempre presente (também com balances=0); [] quando não há divórcio de alma gêmea na janela. */
+  soulmateCycle: EconomySoulmateCycleHour[];
 }
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -212,15 +232,55 @@ export class EconomySummaryService {
       FROM m GROUP BY q ORDER BY q
     `;
 
+    // Ciclo da alma gêmea: cada divórcio de alma gêmea na janela, com o custo das cotas compradas pelo
+    // próprio dono daquele personagem desde o divórcio anterior dele (mesmo usuário e personagem, de alma
+    // gêmea ou não). Os dois LATERAL usam o índice (userId, createdAt) do extrato.
+    const soulmateQuery = this.prisma.$queryRaw<
+      Array<{ hour: bigint; divorces: bigint; paid: bigint; quota_cost: bigint; above_cost: bigint; max_return: number | null }>
+    >`
+      SELECT
+        (EXTRACT(EPOCH FROM date_trunc('hour', d."createdAt"))::bigint * 1000) AS hour,
+        COUNT(*)::bigint AS divorces,
+        COALESCE(SUM(d.amount), 0)::bigint AS paid,
+        COALESCE(SUM(c.cost), 0)::bigint AS quota_cost,
+        COUNT(*) FILTER (WHERE d.amount >= c.cost)::bigint AS above_cost,
+        MAX(d.amount::float8 / c.cost) FILTER (WHERE c.cost > 0) AS max_return
+      FROM kakera_transactions d
+      CROSS JOIN LATERAL (
+        SELECT MAX(p."createdAt") AS at
+        FROM kakera_transactions p
+        WHERE p."userId" = d."userId"
+          AND p."createdAt" < d."createdAt"
+          AND p.reason = 'DIVORCE'
+          AND p.metadata->>'characterId' = d.metadata->>'characterId'
+      ) prev
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(SUM(-b.amount), 0)::bigint AS cost
+        FROM kakera_transactions b
+        WHERE b."userId" = d."userId"
+          AND b."createdAt" < d."createdAt"
+          AND (prev.at IS NULL OR b."createdAt" > prev.at)
+          AND b.reason = 'MARKET_BUY'
+          AND b.metadata->>'type' = 'MARRIED_SHARE_PURCHASE'
+          AND b.metadata->>'characterId' = d.metadata->>'characterId'
+      ) c
+      WHERE d."createdAt" >= ${fromTs} AND d."createdAt" < ${toTs}
+        AND d.reason = 'DIVORCE'
+        AND d.metadata->>'isSoulmate' = 'true'
+      GROUP BY 1
+      ORDER BY 1
+    `;
+
     // Um único retrato (REPEATABLE READ): as faixas de balances e de receivedByQuintile batem entre si.
-    // Sem o retrato, só a consulta dos fluxos roda (os demais $queryRaw não executados nunca vão ao banco).
-    const queries: any[] = [flowsQuery];
+    // Sem o retrato, só as consultas do extrato (fluxos e ciclo da alma gêmea) rodam (os demais $queryRaw não
+    // executados nunca vão ao banco).
+    const queries: any[] = [flowsQuery, soulmateQuery];
     if (includeBalances) queries.push(totalsQuery, holdersQuery, quintilesQuery);
     if (includeReceived) queries.push(receivedQuery);
     const results = (await this.prisma.$transaction(queries as any, {
       isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     })) as any[][];
-    const [flowRows, totalsRows = [], holdersRows = [], quintileRows = [], receivedRows = []] = results;
+    const [flowRows, soulmateRows, totalsRows = [], holdersRows = [], quintileRows = [], receivedRows = []] = results;
 
     const flows: EconomyFlow[] = flowRows.map((r) => ({
       hour: num(r.hour),
@@ -229,6 +289,15 @@ export class EconomySummaryService {
       amountOut: num(r.amount_out),
       count: num(r.tx_count),
       users: num(r.users),
+    }));
+
+    const soulmateCycle: EconomySoulmateCycleHour[] = soulmateRows.map((r) => ({
+      hour: num(r.hour),
+      divorces: num(r.divorces),
+      paid: num(r.paid),
+      quotaCost: num(r.quota_cost),
+      aboveCost: num(r.above_cost),
+      maxReturn: numOrNull(r.max_return),
     }));
 
     const totals = totalsRows[0] || {};
@@ -279,6 +348,7 @@ export class EconomySummaryService {
           }
         : null,
       receivedByQuintile,
+      soulmateCycle,
     };
   }
 }
