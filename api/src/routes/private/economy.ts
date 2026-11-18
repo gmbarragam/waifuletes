@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { verifyApiKey } from '../../plugins/auth.js';
-import { EconomySummaryService } from '../../services/EconomySummaryService.js';
+import { EconomySummaryService, PLAYERS_MAX_WINDOW_MS } from '../../services/EconomySummaryService.js';
 import { withBusinessSpan, setAttrs } from '../../telemetry.js';
 
 /** Tolerância de relógio para `to` no futuro. */
@@ -63,6 +63,53 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
             'waifu.economy.holders': summary.balances?.holders,
           });
           return summary;
+        }
+      );
+
+      if ('success' in result && result.success === false) {
+        return reply.status(400).send(result);
+      }
+      return reply.send(result);
+    },
+  });
+
+  fastify.get('/internal/economy/players', {
+    schema: {
+      description:
+        'Recorte por jogador da economia de Zinthos para o painel da Ravena: saldo atual, saldo no fim da janela e fluxos por motivo em [from, to). Janela de até 8 dias.',
+      tags: ['Kakera & Economia (Privado)'],
+      querystring: {
+        type: 'object',
+        required: ['from', 'to'],
+        properties: {
+          from: { type: 'integer', minimum: 0, maximum: MAX_EPOCH_MS },
+          to: { type: 'integer', minimum: 1, maximum: MAX_EPOCH_MS },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { from, to } = request.query as { from: number; to: number };
+      const now = Date.now();
+
+      const result = await withBusinessSpan(
+        'economy players',
+        { 'waifu.economy.window_ms': to - from },
+        async () => {
+          if (!(to > from)) {
+            return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` deve ser maior que `from`.' } };
+          }
+          if (to > now + FUTURE_TOLERANCE_MS) {
+            return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` não pode estar no futuro.' } };
+          }
+          if (to - from > PLAYERS_MAX_WINDOW_MS) {
+            return { success: false as const, error: { code: 'INVALID_WINDOW', message: 'A janela não pode passar de 8 dias.' } };
+          }
+          const players = await economyService.getPlayers(from, to, now);
+          setAttrs({
+            'waifu.economy.players': players.players.length,
+            'waifu.economy.flow_rows': players.flows.length,
+          });
+          return players;
         }
       );
 
