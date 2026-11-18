@@ -1551,7 +1551,7 @@ export const adminWebRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const cooldownService = new CooldownService(fastify.redis);
-    await cooldownService.resetCooldown(user.id, 'claim');
+    await cooldownService.resetClaimCooldowns(user.id);
 
     return reply.send({
       success: true,

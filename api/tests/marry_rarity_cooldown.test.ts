@@ -365,5 +365,44 @@ describe('💍 Sistema de Cooldown de Casamento por Raridade (CooldownService)',
       const ttl = await redis.ttl(`cooldown:daily:marry:${testUserId}:UNCOMMON`);
       expect(ttl).toBeGreaterThan(0);
     });
+
+    it('resetClaimCooldowns libera todos os locks de claim sem afetar os limites diários', async () => {
+      await cooldownService.acquireClaimLock(testUserId, Rarity.COMMON);
+      await cooldownService.acquireClaimLock(testUserId, Rarity.EPIC);
+      await cooldownService.incrementDailyMarry(testUserId, Rarity.EPIC, 3);
+
+      await cooldownService.resetClaimCooldowns(testUserId);
+
+      const state = await cooldownService.getAllClaimCooldowns(testUserId);
+      expect(state.active).toBe(false);
+      expect(state.byRarity.COMMON.active).toBe(false);
+      expect(state.byRarity.EPIC.active).toBe(false);
+
+      // Limites diários permanecem intocados
+      expect(await cooldownService.getDailyMarryCount(testUserId, Rarity.EPIC)).toBe(3);
+    });
+
+    it('reduceDailyMarryLimits remove corretamente as cotas diárias e nunca fica abaixo de 0', async () => {
+      // Configura contadores iniciais
+      await cooldownService.incrementDailyMarry(testUserId, Rarity.LEGENDARY, 2);
+      await cooldownService.incrementDailyMarry(testUserId, Rarity.EPIC, 3);
+      await cooldownService.incrementDailyMarry(testUserId, Rarity.RARE, 8);
+      await cooldownService.incrementDailyMarry(testUserId, Rarity.UNCOMMON, 12);
+      await cooldownService.incrementDailyMarry(testUserId, Rarity.COMMON, 10);
+
+      // 1 bloco de R$ 30: -1 leg, -1 epic, -5 rare, -10 unc, -15 com
+      const res = await cooldownService.reduceDailyMarryLimits(testUserId, 1);
+      expect(res.reduced.LEGENDARY).toBe(1);
+      expect(res.reduced.EPIC).toBe(1);
+      expect(res.reduced.RARE).toBe(5);
+      expect(res.reduced.UNCOMMON).toBe(10);
+      expect(res.reduced.COMMON).toBe(15);
+
+      expect(await cooldownService.getDailyMarryCount(testUserId, Rarity.LEGENDARY)).toBe(1); // 2 - 1 = 1
+      expect(await cooldownService.getDailyMarryCount(testUserId, Rarity.EPIC)).toBe(2);      // 3 - 1 = 2
+      expect(await cooldownService.getDailyMarryCount(testUserId, Rarity.RARE)).toBe(3);      // 8 - 5 = 3
+      expect(await cooldownService.getDailyMarryCount(testUserId, Rarity.UNCOMMON)).toBe(2);  // 12 - 10 = 2
+      expect(await cooldownService.getDailyMarryCount(testUserId, Rarity.COMMON)).toBe(0);    // 10 - 15 = 0 (nunca negativo!)
+    });
   });
 });

@@ -887,6 +887,49 @@ export class CooldownService {
     };
   }
 
+  /**
+   * Reseta todos os cooldowns de casamento do usuário (liberando-o para casar imediatamente em todas as raridades).
+   * Não altera os contadores diários de casamento/troca.
+   */
+  async resetClaimCooldowns(userId: string): Promise<void> {
+    const keysToDelete = ALL_RARITIES.map((r) => this.claimKey(userId, r));
+    keysToDelete.push(this.legacyClaimKey(userId));
+    await this.redis.del(...keysToDelete);
+  }
+
+  /**
+   * Reduz o consumo do limite diário de casamento do usuário por blocos de doação (R$ 30 por bloco).
+   * A cada bloco: -1 Lendário, -1 Épico, -5 Raros, -10 Incomuns, -15 Comuns.
+   * Os valores são limitados a zero pelo script atômico Lua (nunca ficam negativos).
+   */
+  async reduceDailyMarryLimits(userId: string, blocks: number = 1): Promise<{
+    reduced: { LEGENDARY: number; EPIC: number; RARE: number; UNCOMMON: number; COMMON: number };
+    current: Record<Rarity, number>;
+  }> {
+    const count = Math.max(0, Math.floor(Number(blocks) || 0));
+    const reductions: Record<Rarity, number> = {
+      LEGENDARY: 1 * count,
+      EPIC: 1 * count,
+      RARE: 5 * count,
+      UNCOMMON: 10 * count,
+      COMMON: 15 * count,
+    };
+
+    if (count > 0) {
+      for (const [rarity, amount] of Object.entries(reductions)) {
+        await this.decrementDailyMarry(userId, rarity as Rarity, amount);
+      }
+      await this.decrementWeeklyLegendary(userId, 1 * count);
+    }
+
+    const current: any = {};
+    for (const r of ALL_RARITIES) {
+      current[r] = await this.getDailyMarryCount(userId, r);
+    }
+
+    return { reduced: reductions, current };
+  }
+
   async resetCooldown(userId: string, type: 'roll' | 'claim' | 'daily' | 'all', rarity?: Rarity | string): Promise<void> {
     if (type === 'roll' || type === 'all') {
       await this.redis.del(this.userRollsKey(userId));
@@ -895,14 +938,18 @@ export class CooldownService {
       if (rarity) {
         const normRarity = String(rarity).toUpperCase() as Rarity;
         await this.redis.del(this.claimKey(userId, normRarity));
-        await this.redis.del(this.dailyMarryKey(userId, normRarity));
-        await this.redis.del(this.dailyTradeKey(userId, normRarity));
+        if (type === 'all') {
+          await this.redis.del(this.dailyMarryKey(userId, normRarity));
+          await this.redis.del(this.dailyTradeKey(userId, normRarity));
+        }
       } else {
         const keysToDelete = ALL_RARITIES.map((r) => this.claimKey(userId, r));
         keysToDelete.push(this.legacyClaimKey(userId));
-        for (const r of ALL_RARITIES) {
-          keysToDelete.push(this.dailyMarryKey(userId, r));
-          keysToDelete.push(this.dailyTradeKey(userId, r));
+        if (type === 'all') {
+          for (const r of ALL_RARITIES) {
+            keysToDelete.push(this.dailyMarryKey(userId, r));
+            keysToDelete.push(this.dailyTradeKey(userId, r));
+          }
         }
         await this.redis.del(...keysToDelete);
       }

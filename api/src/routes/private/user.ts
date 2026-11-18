@@ -442,6 +442,84 @@ export const privateUserRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/api/private/users/:userId/rolls/add', addRollsRoute);
   fastify.post('/user/:userId/add-rolls', addRollsRoute);
 
+  const resetClaimCooldownsRoute = {
+    preHandler: verifyApiKey,
+    schema: {
+      description: 'Reseta todos os cooldowns de casamento do usuário (bônus de doação >= R$20 / superadmin)',
+      tags: ['Usuários (Privado)'],
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string' } },
+      },
+    },
+    handler: async (request: any, reply: any) => {
+      const { userId } = request.params as { userId: string };
+      const user = await fastify.prisma.user.findFirst({
+        where: { OR: [{ id: userId }, { publicId: userId }] },
+      });
+      const targetId = user?.id || userId;
+      await cooldownService.resetClaimCooldowns(targetId);
+      return reply.send({
+        success: true,
+        data: {
+          userId: targetId,
+          message: 'Todos os cooldowns de casamento foram renovados com sucesso!',
+        },
+      });
+    },
+  };
+
+  fastify.post('/user/:userId/reset-claim-cooldowns', resetClaimCooldownsRoute);
+  fastify.post('/api/private/users/:userId/reset-claim-cooldowns', resetClaimCooldownsRoute);
+  fastify.post('/user/:userId/reset-cds', resetClaimCooldownsRoute);
+
+  const reduceDailyMarryRoute = {
+    preHandler: verifyApiKey,
+    schema: {
+      description: 'Remove do consumo do limite diário de casamento do usuário (1 Lendário, 1 Épico, 5 Raros, 10 Incomuns, 15 Comuns por bloco de R$30 doados)',
+      tags: ['Usuários (Privado)'],
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string' } },
+      },
+      body: {
+        type: 'object',
+        required: ['blocks'],
+        additionalProperties: false,
+        properties: {
+          blocks: { type: 'integer', minimum: 1 },
+          reason: { type: 'string' },
+          donateValue: { type: 'number' },
+        },
+      },
+    },
+    handler: async (request: any, reply: any) => {
+      const { userId } = request.params as { userId: string };
+      const { blocks } = request.body as { blocks: number };
+
+      const user = await fastify.prisma.user.findFirst({
+        where: { OR: [{ id: userId }, { publicId: userId }] },
+      });
+      const targetId = user?.id || userId;
+
+      const result = await cooldownService.reduceDailyMarryLimits(targetId, blocks);
+      return reply.send({
+        success: true,
+        data: {
+          userId: targetId,
+          blocks,
+          reduced: result.reduced,
+          current: result.current,
+        },
+      });
+    },
+  };
+
+  fastify.post('/user/:userId/daily-marry/reduce', reduceDailyMarryRoute);
+  fastify.post('/api/private/users/:userId/daily-marry/reduce', reduceDailyMarryRoute);
+
   fastify.get('/user/:userId/mythic-slots', {
     preHandler: verifyApiKey,
     schema: {
