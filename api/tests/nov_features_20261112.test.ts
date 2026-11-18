@@ -283,6 +283,7 @@ describe('Features Nov/2026 — Backend Rules', () => {
         }),
         canMarryDaily: vi.fn().mockResolvedValue({ allowed: true }),
         setClaimLock: vi.fn().mockResolvedValue(undefined),
+        getWeeklyLegendaryCount: vi.fn().mockResolvedValue(0),
       };
 
       const mythicChar = {

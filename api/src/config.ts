@@ -39,6 +39,8 @@ const envSchema = z.object({
   ROLL_REGEN_ACCEL_FACTOR: z.coerce.number().default(20), // Dividido por 1000 (20 = 0.020)
   ROLL_LEGENDARY_CHANCE_CAP: z.coerce.number().default(80), // 0 a 10000 (80 = 0.80%, 1 = 0.01%, 10000 = 10%)
   WEEKLY_LEGENDARY_HARD_CAP: z.coerce.number().default(8), // Teto semanal de Lendárias obtidas por jogador no roll (8 = 0% de chance após a 8ª)
+  ROLL_SCRAP_BONUS_FACTOR: z.coerce.number().default(0.3), // Bônus por rolls disponíveis (~15% do valor original de 2.0)
+  ROLL_SCRAP_BONUS_CAP: z.coerce.number().default(150), // Teto máximo do bônus de rolls disponíveis
 
   SOULMATE_KEYS_REQUIRED: z.coerce.number().default(10),
   WISHLIST_MAX_ITEMS: z.coerce.number().default(1000).transform((val) => Math.max(val, 1000)),

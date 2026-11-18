@@ -654,7 +654,9 @@ export class RollService {
 
       // 8. Recompensa de Fragmentos de Zinthos por Roll
       const scrapRandom = Math.floor(Math.random() * (25 - 10 + 1)) + 10;
-      const scrapRollBonus = rollsState.availableRolls * 2;
+      const rawScrapRollBonus = Math.floor(rollsState.availableRolls * config.ROLL_SCRAP_BONUS_FACTOR);
+      const scrapRollBonus = Math.min(config.ROLL_SCRAP_BONUS_CAP, rawScrapRollBonus);
+      const scrapRollBonusCapped = rawScrapRollBonus > config.ROLL_SCRAP_BONUS_CAP;
       let rarityBonus = 0;
       if (chosen.baseRarity === 'RARE') rarityBonus = 35;
       else if (chosen.baseRarity === 'EPIC') rarityBonus = 100;
@@ -685,6 +687,8 @@ export class RollService {
               baseScrap,
               scrapRandom,
               scrapRollBonus,
+              scrapRollBonusRaw: rawScrapRollBonus,
+              scrapRollBonusCapped,
               rarityBonus,
               wishlistCount,
               wishlistMultiplier,
