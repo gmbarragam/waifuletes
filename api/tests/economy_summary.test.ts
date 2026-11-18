@@ -486,6 +486,186 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
     });
   });
 
+  describe('GET /internal/economy/players — recorte por jogador', () => {
+    const players = (qs: string, headers?: Record<string, string>) => get(`/internal/economy/players?${qs}`, headers);
+
+    describe('autenticação', () => {
+      it('recusa sem Authorization e com chave errada (401)', async () => {
+        const qs = `from=${FLOW_BASE}&to=${FLOW_BASE + HOUR}`;
+        expect((await players(qs, {})).statusCode).toBe(401);
+        expect((await players(qs, { authorization: 'Bearer chave_errada' })).statusCode).toBe(401);
+      });
+
+      it('autentica antes de validar os parâmetros (401, não 400)', async () => {
+        const res = await players('from=abc', {});
+        expect(res.statusCode).toBe(401);
+        expect(res.json().error.code).toBe('UNAUTHORIZED');
+      });
+    });
+
+    describe('validação (400)', () => {
+      const now = Date.now();
+      it.each([
+        ['sem parâmetros', ''],
+        ['sem to', `from=${FLOW_BASE}`],
+        ['from não numérico', `from=abc&to=${FLOW_BASE}`],
+        ['from fracionário', `from=1.5&to=${FLOW_BASE}`],
+        ['from negativo', `from=-1&to=${FLOW_BASE}`],
+      ])('%s', async (_label, qs) => {
+        const res = await players(qs);
+        expect(res.statusCode).toBe(400);
+        expect(res.json().success).toBe(false);
+      });
+
+      it.each([
+        ['to igual a from', `from=${FLOW_BASE}&to=${FLOW_BASE}`],
+        ['to menor que from', `from=${FLOW_BASE}&to=${FLOW_BASE - 1}`],
+        ['to além de agora + 60s', `from=${now - HOUR}&to=${now + 5 * 60_000}`],
+        ['janela maior que 8 dias', `from=${RECV_BASE}&to=${RECV_BASE + 8 * DAY + 1}`],
+        ['histórico inteiro (from=0)', `from=0&to=${now}`],
+      ])('%s → INVALID_WINDOW', async (_label, qs) => {
+        const res = await players(qs);
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('INVALID_WINDOW');
+      });
+
+      it('aceita janela de exatamente 8 dias e to até agora + 60s', async () => {
+        expect((await players(`from=${RECV_BASE}&to=${RECV_BASE + 8 * DAY}`)).statusCode).toBe(200);
+        expect((await players(`from=${Date.now() - HOUR}&to=${Date.now() + 30_000}`)).statusCode).toBe(200);
+      });
+    });
+
+    it('forma da resposta e fluxos separados por jogador e motivo', async () => {
+      const res = await players(`from=${FLOW_BASE}&to=${FLOW_BASE + 2 * HOUR}`);
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toMatchObject({
+        currency: 'zinthos',
+        schemaVersion: 1,
+        window: { from: FLOW_BASE, to: FLOW_BASE + 2 * HOUR },
+        ledger: { available: true },
+      });
+      expect(typeof body.generatedAt).toBe('number');
+      expect(body.flows).toEqual([
+        { id: hid(1), reason: 'DAILY_REWARD', amountIn: 50, amountOut: 0, count: 1 },
+        { id: hid(1), reason: 'HOSTING_FEE', amountIn: 0, amountOut: 40, count: 1 },
+        { id: hid(25), reason: 'MARKET_TRADE', amountIn: 10, amountOut: 5, count: 2 },
+        { id: hid(50), reason: 'DAILY_REWARD', amountIn: 120, amountOut: 0, count: 2 },
+        { id: hid(50), reason: 'MARKET_BUY', amountIn: 0, amountOut: 30, count: 1 },
+      ]);
+      // As 50 contas com saldo entram (com ou sem extrato na janela); as zeradas sem extrato, não.
+      const ids = body.players.map((p: any) => p.id);
+      expect(ids).toHaveLength(50);
+      expect(ids).toContain(hid(40));
+      expect(ids.some((id: string) => id.startsWith('econ_zero_'))).toBe(false);
+      expect(body.players.find((p: any) => p.id === hid(1))).toEqual({
+        id: hid(1),
+        name: 'Econ 1',
+        platform: 'WHATSAPP',
+        balance: 10,
+        balanceAtWindowEnd: 10 - (1000 + 500 + (-20) + 9999 + 10),
+        lastActiveAt: null,
+      });
+      // Só saldo, sem extrato em nenhum momento depois de `to`.
+      expect(body.players.find((p: any) => p.id === hid(40))).toMatchObject({ balance: 400, balanceAtWindowEnd: 400 });
+    });
+
+    it('ADMIN_GRANT separado pela mesma chave de motivo do resumo', async () => {
+      const body = (await players(`from=${SPLIT_BASE}&to=${SPLIT_BASE + HOUR}`)).json();
+      const f = (id: string, reason: string, amountIn: number, amountOut: number, count: number) => ({
+        id,
+        reason,
+        amountIn,
+        amountOut,
+        count,
+      });
+      const expected = [
+        f(hid(20), 'ADMIN_GRANT:bank_withdraw_zinthos', 100, 0, 1),
+        f(hid(21), 'ADMIN_GRANT:bank_withdraw_zinthos', 100, 0, 1),
+        f(hid(20), 'ADMIN_GRANT:bank_deposit_runas', 0, 50, 1),
+        f(hid(20), 'ADMIN_GRANT:slots_prize', 30, 0, 1),
+        f(hid(20), 'ADMIN_GRANT:donor_bonus', 20, 0, 1),
+        f(hid(20), 'ADMIN_GRANT', 11, 0, 2),
+        f(hid(20), 'ADMIN_GRANT:other', 25, 0, 3),
+        f(hid(20), `ADMIN_GRANT:${'a'.repeat(64)}`, 9, 0, 1),
+        f(hid(20), 'DIVORCE', 11, 0, 1),
+      ];
+      expect(body.flows).toHaveLength(expected.length);
+      expect(body.flows).toEqual(expect.arrayContaining(expected));
+    });
+
+    it('lastActiveAt em epoch ms', async () => {
+      const at = Date.UTC(2026, 4, 2, 3, 4, 5, 678);
+      await server.prisma.user.update({ where: { id: hid(10) }, data: { lastActiveAt: new Date(at) } });
+      try {
+        const body = (await players(`from=${FLOW_BASE}&to=${FLOW_BASE + HOUR}`)).json();
+        expect(body.players.find((p: any) => p.id === hid(10)).lastActiveAt).toBe(at);
+      } finally {
+        await server.prisma.user.update({ where: { id: hid(10) }, data: { lastActiveAt: null } });
+      }
+    });
+
+    it('balanceAtWindowEnd desconta o extrato depois de `to`, sem HOSTING_FEE_WAIFU; zerado com extrato entra', async () => {
+      const at = Date.now() - 5_000;
+      const prisma = server.prisma;
+      await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { increment: 123 - 40 } } });
+      const rows = await prisma.$transaction([
+        prisma.kakeraTransaction.create({ data: { userId: hid(50), amount: 123, reason: 'DAILY_REWARD', createdAt: new Date(at) } }),
+        prisma.kakeraTransaction.create({ data: { userId: hid(50), amount: -40, reason: 'HOSTING_FEE', createdAt: new Date(at) } }),
+        prisma.kakeraTransaction.create({ data: { userId: hid(50), amount: 300, reason: 'HOSTING_FEE_WAIFU', createdAt: new Date(at) } }),
+        // Conta zerada que movimentou na janela (entrou e saiu): aparece com saldo 0.
+        prisma.kakeraTransaction.create({ data: { userId: 'econ_zero_2', amount: 5, reason: 'DAILY_REWARD', createdAt: new Date(at) } }),
+        prisma.kakeraTransaction.create({ data: { userId: 'econ_zero_2', amount: -5, reason: 'MARKET_BUY', createdAt: new Date(at) } }),
+      ]);
+      try {
+        const before = (await players(`from=${at - HOUR}&to=${at}`)).json();
+        expect(before.players.find((p: any) => p.id === hid(50))).toMatchObject({ balance: 583, balanceAtWindowEnd: 500 });
+        expect(before.players.map((p: any) => p.id)).not.toContain('econ_zero_2');
+
+        const after = (await players(`from=${at}&to=${at + 1}`)).json();
+        expect(after.players.find((p: any) => p.id === hid(50))).toMatchObject({ balance: 583, balanceAtWindowEnd: 583 });
+        expect(after.players.find((p: any) => p.id === 'econ_zero_2')).toMatchObject({ balance: 0, balanceAtWindowEnd: 0 });
+        expect(after.players.map((p: any) => p.id)).not.toContain('econ_zero_1');
+        expect(after.flows).toEqual([
+          { id: hid(50), reason: 'DAILY_REWARD', amountIn: 123, amountOut: 0, count: 1 },
+          { id: hid(50), reason: 'HOSTING_FEE', amountIn: 0, amountOut: 40, count: 1 },
+          { id: hid(50), reason: 'HOSTING_FEE_WAIFU', amountIn: 300, amountOut: 0, count: 1 },
+          { id: 'econ_zero_2', reason: 'DAILY_REWARD', amountIn: 5, amountOut: 0, count: 1 },
+          { id: 'econ_zero_2', reason: 'MARKET_BUY', amountIn: 0, amountOut: 5, count: 1 },
+        ]);
+      } finally {
+        await prisma.kakeraTransaction.deleteMany({ where: { id: { in: rows.map((r: any) => r.id) } } });
+        await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { decrement: 123 - 40 } } });
+      }
+    });
+
+    it('somando os jogadores, os fluxos batem com ledger.flows do resumo na mesma janela', async () => {
+      const byReason = (rows: any[]) => {
+        const m: Record<string, { amountIn: number; amountOut: number; count: number }> = {};
+        for (const r of rows) {
+          const acc = (m[r.reason] ||= { amountIn: 0, amountOut: 0, count: 0 });
+          acc.amountIn += r.amountIn;
+          acc.amountOut += r.amountOut;
+          acc.count += r.count;
+        }
+        return m;
+      };
+      for (const [from, to] of [
+        [FLOW_BASE, FLOW_BASE + 2 * HOUR],
+        [SPLIT_BASE, SPLIT_BASE + HOUR],
+        [RECV_BASE, RECV_BASE + 8 * DAY],
+      ]) {
+        const summary = (await get(`/internal/economy/summary?from=${from}&to=${to}&balances=0`)).json();
+        const perPlayer = (await players(`from=${from}&to=${to}`)).json();
+        expect(Object.keys(byReason(summary.ledger.flows)).length).toBeGreaterThan(0);
+        expect(byReason(perPlayer.flows)).toEqual(byReason(summary.ledger.flows));
+        // Todo jogador com fluxo está em players.
+        const ids = new Set(perPlayer.players.map((p: any) => p.id));
+        for (const f of perPlayer.flows) expect(ids.has(f.id)).toBe(true);
+      }
+    });
+  });
+
   describe('faixas pequenas (n < 10) saem preenchidas', () => {
     it('preenche min/max/sum e receivedSum/receivedMedian dos quintos com menos de 10 contas', async () => {
       // Zera 3 contas do 1º quinto: 47 holders → quintos de 10, 10, 9, 9, 9.

@@ -1,8 +1,9 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 
 /**
- * Resumo agregado da economia de Zinthos (tabela `users.kakera` + extrato `kakera_transactions`)
- * para o painel da economia da Ravena. Só totais, contagens e faixas (quintos). As faixas saem sempre
+ * Economia de Zinthos (tabela `users.kakera` + extrato `kakera_transactions`) para o painel da economia
+ * da Ravena. `getSummary` traz só totais, contagens e faixas (quintos); `getPlayers` traz o recorte por
+ * jogador (saldo e fluxos por motivo na janela), para a rota interna /internal/economy/players. As faixas saem sempre
  * preenchidas, mesmo com poucos membros: é moeda de jogo e identificar jogadores não é problema (decisão
  * do dono do produto). Toda a agregação é feita no Postgres.
  */
@@ -11,6 +12,9 @@ export const ECONOMY_SCHEMA_VERSION = 1;
 
 /** `receivedByQuintile` só é calculado quando pedido (`received=1`) e para janelas de até 8 dias. */
 export const RECEIVED_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
+
+/** Maior janela aceita em /internal/economy/players (8 dias). */
+export const PLAYERS_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 
 /**
  * O ADMIN_GRANT junta coisas diferentes (câmbio do banco da Ravena, bônus de doador, prêmio do caça-níquel,
@@ -123,6 +127,35 @@ export interface EconomySummary {
   receivedByQuintile: EconomyReceivedQuintile[];
   /** Sempre presente (também com balances=0); [] quando não há divórcio de alma gêmea na janela. */
   soulmateCycle: EconomySoulmateCycleHour[];
+}
+
+export interface EconomyPlayer {
+  id: string;
+  name: string;
+  platform: string;
+  balance: number;
+  /** Saldo reconstruído no instante `to` (mesma regra de balances.totalAtWindowEnd). */
+  balanceAtWindowEnd: number;
+  lastActiveAt: number | null;
+}
+
+/** Fluxo de um jogador num motivo (mesma chave de motivo de ledger.flows), somado na janela inteira. */
+export interface EconomyPlayerFlow {
+  id: string;
+  reason: string;
+  amountIn: number;
+  amountOut: number;
+  count: number;
+}
+
+export interface EconomyPlayers {
+  currency: 'zinthos';
+  schemaVersion: number;
+  generatedAt: number;
+  window: { from: number; to: number };
+  ledger: { available: true };
+  players: EconomyPlayer[];
+  flows: EconomyPlayerFlow[];
 }
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -349,6 +382,85 @@ export class EconomySummaryService {
         : null,
       receivedByQuintile,
       soulmateCycle,
+    };
+  }
+
+  /**
+   * Recorte por jogador para o painel: todo usuário com saldo diferente de zero ou com pelo menos uma linha
+   * do extrato em [from, to), e os fluxos de cada um por motivo na janela. A soma dos fluxos de todos os
+   * jogadores bate com a soma de ledger.flows do resumo na mesma janela (mesma chave de motivo).
+   */
+  async getPlayers(from: number, to: number, now: number = Date.now()): Promise<EconomyPlayers> {
+    const fromTs = tsFromMs(from);
+    const toTs = tsFromMs(to);
+
+    // balanceAtWindowEnd: saldo atual − Σ amount do jogador com createdAt >= to, sem HOSTING_FEE_WAIFU
+    // (mesma regra e mesma ressalva de balances.totalAtWindowEnd).
+    const playersQuery = this.prisma.$queryRaw<
+      Array<{ id: string; name: string; platform: string; balance: bigint; balance_at_end: bigint; last_active_at: bigint | null }>
+    >`
+      SELECT
+        u.id,
+        u.name,
+        u.platform::text AS platform,
+        u.kakera::bigint AS balance,
+        (u.kakera - COALESCE(a.after_to, 0))::bigint AS balance_at_end,
+        (EXTRACT(EPOCH FROM u.last_active_at) * 1000)::bigint AS last_active_at
+      FROM users u
+      LEFT JOIN (
+        SELECT "userId", SUM(amount)::bigint AS after_to
+        FROM kakera_transactions
+        WHERE "createdAt" >= ${toTs} AND reason <> 'HOSTING_FEE_WAIFU'
+        GROUP BY "userId"
+      ) a ON a."userId" = u.id
+      WHERE u.kakera <> 0
+         OR EXISTS (
+           SELECT 1 FROM kakera_transactions t
+           WHERE t."userId" = u.id AND t."createdAt" >= ${fromTs} AND t."createdAt" < ${toTs}
+         )
+      ORDER BY u.id
+    `;
+    const flowsQuery = this.prisma.$queryRaw<
+      Array<{ id: string; reason: string; amount_in: bigint; amount_out: bigint; tx_count: bigint }>
+    >`
+      SELECT
+        "userId" AS id,
+        ${reasonKeySql} AS reason,
+        COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::bigint AS amount_in,
+        COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0)::bigint AS amount_out,
+        COUNT(*)::bigint AS tx_count
+      FROM kakera_transactions
+      WHERE "createdAt" >= ${fromTs} AND "createdAt" < ${toTs}
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    `;
+
+    // Um único retrato (REPEATABLE READ): todo jogador com fluxo na janela está em players.
+    const [playerRows, flowRows] = (await this.prisma.$transaction([playersQuery, flowsQuery] as any, {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    })) as any[][];
+
+    return {
+      currency: 'zinthos',
+      schemaVersion: ECONOMY_SCHEMA_VERSION,
+      generatedAt: now,
+      window: { from, to },
+      ledger: { available: true },
+      players: playerRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        platform: r.platform,
+        balance: num(r.balance),
+        balanceAtWindowEnd: num(r.balance_at_end),
+        lastActiveAt: numOrNull(r.last_active_at),
+      })),
+      flows: flowRows.map((r) => ({
+        id: r.id,
+        reason: r.reason,
+        amountIn: num(r.amount_in),
+        amountOut: num(r.amount_out),
+        count: num(r.tx_count),
+      })),
     };
   }
 }
