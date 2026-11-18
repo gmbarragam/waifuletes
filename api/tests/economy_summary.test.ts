@@ -159,6 +159,8 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       ['to menor que from', `?from=${FLOW_BASE}&to=${FLOW_BASE - 1}`],
       ['to além de agora + 60s', `?from=0&to=${now + 5 * 60_000}`],
       ['received inválido', `?from=${FLOW_BASE}&to=${FLOW_BASE + HOUR}&received=2`],
+      ['balances inválido', `?from=${FLOW_BASE}&to=${FLOW_BASE + HOUR}&balances=2`],
+      ['balances não numérico', `?from=${FLOW_BASE}&to=${FLOW_BASE + HOUR}&balances=sim`],
     ])('%s', async (_label, qs) => {
       const res = await get(`/internal/economy/summary${qs}`);
       expect(res.statusCode).toBe(400);
@@ -268,6 +270,39 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
         { q: 4, n: 10, min: 310, max: 400, sum: 3550 },
         { q: 5, n: 10, min: 410, max: 500, sum: 4550 },
       ]);
+    });
+  });
+
+  describe('parâmetro balances', () => {
+    const qs = `from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}&received=1`;
+
+    it('padrão (sem o parâmetro) é igual a balances=1 e traz o retrato', async () => {
+      const dflt = (await get(`/internal/economy/summary?${qs}`)).json();
+      const one = (await get(`/internal/economy/summary?${qs}&balances=1`)).json();
+      expect(dflt.balances).toMatchObject({ total: 12750, totalAtWindowEnd: 12750 - 9999 - 256, holders: 50, accounts: 53 });
+      expect(dflt.balances.quintiles).toHaveLength(5);
+      expect(dflt.receivedByQuintile).toHaveLength(5);
+      expect(one.balances).toEqual(dflt.balances);
+      expect(one.receivedByQuintile).toEqual(dflt.receivedByQuintile);
+      expect(one.ledger).toEqual(dflt.ledger);
+    });
+
+    it('balances=0 devolve balances: null, os mesmos fluxos e receivedByQuintile []', async () => {
+      const dflt = (await get(`/internal/economy/summary?${qs}`)).json();
+      const res = await get(`/internal/economy/summary?${qs}&balances=0`);
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.balances).toBeNull();
+      expect(body.receivedByQuintile).toEqual([]);
+      expect(body.ledger).toEqual(dflt.ledger);
+      expect(body.ledger.flows.length).toBeGreaterThan(0);
+      expect(body).toMatchObject({ currency: 'zinthos', schemaVersion: 1, window: { from: RECV_BASE, to: RECV_BASE + 7 * DAY } });
+    });
+
+    it('balances=0 com from=0 (pedaço histórico) também funciona', async () => {
+      const body = (await get(`/internal/economy/summary?from=0&to=${Date.now()}&balances=0`)).json();
+      expect(body.balances).toBeNull();
+      expect(body.ledger.flows.reduce((s: number, f: any) => s + f.count, 0)).toBe(26 + 3 + 12);
     });
   });
 
