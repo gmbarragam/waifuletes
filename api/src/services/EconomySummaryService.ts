@@ -2,14 +2,12 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 /**
  * Resumo agregado da economia de Zinthos (tabela `users.kakera` + extrato `kakera_transactions`)
- * para o painel da economia da Ravena. Nenhum dado por jogador sai daqui: só totais, contagens e
- * faixas (quintos). Toda a agregação é feita no Postgres.
+ * para o painel da economia da Ravena. Só totais, contagens e faixas (quintos). As faixas saem sempre
+ * preenchidas, mesmo com poucos membros: é moeda de jogo e identificar jogadores não é problema (decisão
+ * do dono do produto). Toda a agregação é feita no Postgres.
  */
 
 export const ECONOMY_SCHEMA_VERSION = 1;
-
-/** Grupos com menos membros que isto têm os valores anulados (evita identificar alguém). */
-export const MIN_GROUP_SIZE = 10;
 
 /** `receivedByQuintile` só é calculado quando pedido (`received=1`) e para janelas de até 8 dias. */
 export const RECEIVED_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
@@ -240,27 +238,24 @@ export class EconomySummaryService {
 
     const quintiles: EconomyQuintile[] = [1, 2, 3, 4, 5].map((q) => {
       const row = quintileRows.find((r) => Number(r.q) === q);
-      const n = row ? num(row.n) : 0;
-      const visible = n >= MIN_GROUP_SIZE;
+      // Faixa sem membros (menos de 5 holders) vem com n=0 e valores nulos.
       return {
         q,
-        n,
-        min: visible ? numOrNull(row.min) : null,
-        max: visible ? numOrNull(row.max) : null,
-        sum: visible ? numOrNull(row.sum) : null,
+        n: row ? num(row.n) : 0,
+        min: row ? numOrNull(row.min) : null,
+        max: row ? numOrNull(row.max) : null,
+        sum: row ? numOrNull(row.sum) : null,
       };
     });
 
     const receivedByQuintile: EconomyReceivedQuintile[] = includeReceived
       ? [1, 2, 3, 4, 5].map((q) => {
           const row = receivedRows.find((r) => Number(r.q) === q);
-          const n = row ? num(row.n) : 0;
-          const visible = n >= MIN_GROUP_SIZE;
           return {
             q,
-            n,
-            receivedSum: visible ? numOrNull(row.received_sum) : null,
-            receivedMedian: visible ? numOrNull(row.received_median) : null,
+            n: row ? num(row.n) : 0,
+            receivedSum: row ? numOrNull(row.received_sum) : null,
+            receivedMedian: row ? numOrNull(row.received_median) : null,
           };
         })
       : [];

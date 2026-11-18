@@ -402,8 +402,8 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
     });
   });
 
-  describe('proteção de grupos pequenos (n < 10)', () => {
-    it('anula min/max/sum e receivedSum/receivedMedian dos quintos com menos de 10 contas', async () => {
+  describe('faixas pequenas (n < 10) saem preenchidas', () => {
+    it('preenche min/max/sum e receivedSum/receivedMedian dos quintos com menos de 10 contas', async () => {
       // Zera 3 contas do 1º quinto: 47 holders → quintos de 10, 10, 9, 9, 9.
       await server.prisma.user.updateMany({ where: { id: { in: [hid(1), hid(2), hid(3)] } }, data: { kakera: 0 } });
 
@@ -415,33 +415,41 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       expect(balances.quintiles).toEqual([
         { q: 1, n: 10, min: 40, max: 130, sum: 850 },
         { q: 2, n: 10, min: 140, max: 230, sum: 1850 },
-        { q: 3, n: 9, min: null, max: null, sum: null },
-        { q: 4, n: 9, min: null, max: null, sum: null },
-        { q: 5, n: 9, min: null, max: null, sum: null },
+        { q: 3, n: 9, min: 240, max: 320, sum: 2520 },
+        { q: 4, n: 9, min: 330, max: 410, sum: 3330 },
+        { q: 5, n: 9, min: 420, max: 500, sum: 4140 },
       ]);
       // h04..h10 continuam no 1º quinto (recebem 40..100); h11 (20 de criação) a h13 entram nele.
+      // h50 (700 de DIVORCE) está no 5º quinto, de 9 contas.
       expect(receivedByQuintile).toEqual([
         { q: 1, n: 10, receivedSum: 510, receivedMedian: 50 },
         { q: 2, n: 10, receivedSum: 0, receivedMedian: 0 },
-        { q: 3, n: 9, receivedSum: null, receivedMedian: null },
-        { q: 4, n: 9, receivedSum: null, receivedMedian: null },
-        { q: 5, n: 9, receivedSum: null, receivedMedian: null },
+        { q: 3, n: 9, receivedSum: 0, receivedMedian: 0 },
+        { q: 4, n: 9, receivedSum: 0, receivedMedian: 0 },
+        { q: 5, n: 9, receivedSum: 700, receivedMedian: 0 },
       ]);
     });
 
-    it('com poucos holders, todos os quintos vêm anulados e os ausentes com n=0', async () => {
+    it('com poucos holders, os quintos com membros vêm preenchidos e os ausentes com n=0 e nulos', async () => {
       await server.prisma.user.updateMany({ where: { id: { notIn: [hid(49), hid(50)] } }, data: { kakera: 0 } });
       const res = await get(`/internal/economy/summary?from=${RECV_BASE}&to=${RECV_BASE + 7 * DAY}&received=1`);
-      const { balances } = res.json();
+      const { balances, receivedByQuintile } = res.json();
       expect(balances.holders).toBe(2);
       expect(balances.total).toBe(990);
       expect(balances.top10Share).toBeCloseTo(500 / 990, 10);
       expect(balances.quintiles).toEqual([
-        { q: 1, n: 1, min: null, max: null, sum: null },
-        { q: 2, n: 1, min: null, max: null, sum: null },
+        { q: 1, n: 1, min: 490, max: 490, sum: 490 },
+        { q: 2, n: 1, min: 500, max: 500, sum: 500 },
         { q: 3, n: 0, min: null, max: null, sum: null },
         { q: 4, n: 0, min: null, max: null, sum: null },
         { q: 5, n: 0, min: null, max: null, sum: null },
+      ]);
+      expect(receivedByQuintile).toEqual([
+        { q: 1, n: 1, receivedSum: 0, receivedMedian: 0 },
+        { q: 2, n: 1, receivedSum: 700, receivedMedian: 700 },
+        { q: 3, n: 0, receivedSum: null, receivedMedian: null },
+        { q: 4, n: 0, receivedSum: null, receivedMedian: null },
+        { q: 5, n: 0, receivedSum: null, receivedMedian: null },
       ]);
     });
   });
