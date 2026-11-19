@@ -36,6 +36,9 @@ describe('MarketService - Reversão Administrativa de Negociações', () => {
       character: {
         findMany: vi.fn(),
       },
+      soulmate: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
       $transaction: vi.fn(async (cb: any) => cb(mockPrisma)),
     };
 

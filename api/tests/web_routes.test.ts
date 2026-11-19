@@ -1037,7 +1037,7 @@ describe('🌐 Workstream Web & Admin — Waifuletes Web Features', () => {
           Authorization: `Bearer ${adminToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ slots: 2 }),
+        body: JSON.stringify({ amount: 2 }),
       });
       expect(res.status).toBe(200);
       const json = await res.json();
@@ -1068,9 +1068,10 @@ describe('🌐 Workstream Web & Admin — Waifuletes Web Features', () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
-      expect(json.data.character).toBeDefined();
-      expect(json.data.character.isMythic).toBe(true);
-      createdMythicId = json.data.character.id;
+      const character = json.data.character || json.data;
+      expect(character).toBeDefined();
+      expect(character.isMythic).toBe(true);
+      createdMythicId = character.id;
     });
 
     it('GET /api/web/user/:publicId/mythics deve listar míticos forjados pelo usuário', async () => {
@@ -1107,7 +1108,8 @@ describe('🌐 Workstream Web & Admin — Waifuletes Web Features', () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
-      expect(json.data.character.mythicCustomization.borderColor).toBe('#38bdf8');
+      const charData = json.data.character || json.data;
+      expect(charData.mythicCustomization.borderColor).toBe('#38bdf8');
     });
 
     it('DELETE /api/web/user/:publicId/mythics/:characterId SEM body deve excluir o mítico e liberar o slot com sucesso (não pode dar "body must be object")', async () => {

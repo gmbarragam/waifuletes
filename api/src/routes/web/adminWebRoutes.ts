@@ -1608,17 +1608,19 @@ export const adminWebRoutes: FastifyPluginAsync = async (fastify) => {
       },
       body: {
         type: 'object',
-        required: ['amount'],
         additionalProperties: false,
         properties: {
           amount: { type: 'integer', minimum: 1 },
+          slots: { type: 'integer', minimum: 1 },
           reason: { type: 'string' },
         },
       },
     },
     handler: async (request, reply) => {
       const { userId } = request.params as { userId: string };
-      const { amount, reason = 'Concessão Administrativa' } = request.body as { amount: number; reason?: string };
+      const body = request.body as { amount?: number; slots?: number; reason?: string };
+      const amount = body.amount ?? body.slots ?? 1;
+      const reason = body.reason || 'Concessão Administrativa';
 
       try {
         const result = await userService.addMythicSlots(userId, amount, reason);

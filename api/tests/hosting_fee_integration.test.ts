@@ -14,7 +14,7 @@ dotenv.config();
  * (chargeUser) para não afetar dados de outras suítes que rodam em paralelo.
  */
 const DATABASE_URL = process.env.DATABASE_URL?.replace('postgres:5432', '127.0.0.1:5433');
-const REDIS_URL = process.env.REDIS_URL;
+const REDIS_URL = process.env.REDIS_URL?.replace('redis:6379', '127.0.0.1:6380');
 
 describe.skipIf(!DATABASE_URL || !REDIS_URL)('🏠 Taxa de hospedagem — integração', () => {
   let prisma: PrismaClient;

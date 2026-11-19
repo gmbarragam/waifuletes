@@ -71,6 +71,7 @@ describe('📢 Ofertas nos classificados quando o personagem sai do anúncio', (
       },
       user: { update: vi.fn() },
       kakeraTransaction: { createMany: vi.fn() },
+      soulmate: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     };
 
     const mockPrisma: any = {

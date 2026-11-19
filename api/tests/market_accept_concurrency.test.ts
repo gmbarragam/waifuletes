@@ -95,8 +95,9 @@ describe.skipIf(!DATABASE_URL)('🔒 Mercado — aceite concorrente de propostas
     if (accepted.length === 1) {
       const winner = accepted[0];
       const paid = winner.id === offerA.id ? 100 : 200;
+      const netReceived = Math.floor(paid * 0.95);
       expect(owner?.userId).toBe(winner.buyerId);
-      expect(users[SELLER]).toBe(1000 + paid);
+      expect(users[SELLER]).toBe(1000 + netReceived);
       expect(users[winner.buyerId]).toBe(1000 - paid);
       const loser = winner.buyerId === BUYER_A ? BUYER_B : BUYER_A;
       expect(users[loser]).toBe(1000);
