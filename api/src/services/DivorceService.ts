@@ -268,13 +268,12 @@ export class DivorceService {
       throw new DomainError('CHARACTER_NOT_IN_HAREM', 'Você não possui este personagem no seu harém.');
     }
 
-    if (haremEntry.isLocked) {
-      throw new DomainError('CHARACTER_LOCKED', 'Este personagem está bloqueado contra divórcio. Desbloqueie-o nas opções do card.');
-    }
-
-    if (haremEntry.collection?.isLocked) {
-      throw new DomainError('COLLECTION_LOCKED', `Este personagem pertence à coleção "${haremEntry.collection.name}", que está bloqueada contra divórcio.`);
-    }
+    const isLocked = Boolean(haremEntry.isLocked || haremEntry.collection?.isLocked);
+    const lockReason = haremEntry.isLocked
+      ? 'Este personagem está bloqueado contra divórcio. Desbloqueie-o nas opções do card.'
+      : haremEntry.collection?.isLocked
+      ? `Este personagem pertence à coleção "${haremEntry.collection.name}", que está bloqueada contra divórcio.`
+      : undefined;
 
     const { character, keys } = haremEntry;
     if (character.isMythic) {
@@ -320,6 +319,8 @@ export class DivorceService {
       keysLost: keys - refund.remainingKeys,
       currentKeys: keys,
       isSoulmate,
+      isLocked,
+      lockReason,
       inflationMultiplier,
       rankMultiplier,
       rarityPosition,
