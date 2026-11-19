@@ -1131,12 +1131,23 @@
 
           <!-- Seleção de Waifus -->
           <div class="offertab-content" id="offertab-waifus">
-            <div id="offer-waifus-search-container" style="margin-bottom: 8px;">
-              <div class="search-input-group" style="margin-bottom: 0;">
+            <div id="offer-waifus-search-container" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; align-items: center;">
+              <div class="search-input-group" style="flex: 1; min-width: 160px; margin-bottom: 0;">
                 <i class="fas fa-search"></i>
                 <input type="text" id="offer-waifus-search-input" class="retro-input" placeholder="Buscar waifus por nome ou série..." autocomplete="off">
                 <button type="button" id="btn-clear-offer-waifus-search" class="btn-retro btn-sm hidden" style="padding: 2px 8px; margin-right: 4px;" title="Limpar busca">&times;</button>
               </div>
+              <select id="offer-waifus-rarity-select" class="retro-select" style="min-width: 100px;">
+                <option value="">Todas</option>
+                <option value="LEGENDARY">⭐ Lendário</option>
+                <option value="EPIC">🟣 Épico</option>
+                <option value="RARE">🔵 Raro</option>
+                <option value="UNCOMMON">🟢 Incomum</option>
+                <option value="COMMON">⚪ Comum</option>
+              </select>
+              <label id="offer-waifus-coveted-label" style="display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="offer-waifus-coveted-checkbox"> 👀 Cobiçados
+              </label>
             </div>
             <div id="offer-waifus-empty-search" class="hidden" style="text-align: center; font-size: 12px; color: var(--text-muted); padding: 16px;">
               Nenhuma waifu encontrada com o termo buscado.
@@ -1152,13 +1163,13 @@
                 <span style="font-size: 12px; color: var(--text-muted);">Seu Saldo: <b id="offer-user-zinthos-balance" style="color: #10b981;">0</b> Zinthos</span>
               </div>
               <div class="form-group" style="margin-bottom: 8px;">
-                <label class="retro-label">Quantidade de Zinthos a oferecer:</label>
+                <label class="retro-label">Quantidade de Zinthos que o destinatário irá receber:</label>
                 <div style="display: flex; gap: 8px; align-items: center;">
                   <input type="number" id="offer-zinthos-input" class="retro-input" min="0" step="1" value="0" placeholder="0" oninput="window.updateOfferZinthosSpreadNote && window.updateOfferZinthosSpreadNote()">
                   <button type="button" class="btn-retro btn-sm" onclick="setOfferZinthosMax()">Máximo</button>
                   <button type="button" class="btn-retro btn-sm btn-danger" onclick="setOfferZinthosZero()">Zerar</button>
                 </div>
-                <div id="offer-zinthos-spread-note" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; font-weight: 600;">(O vendedor irá receber 0 zinthos (descontado taxa de negociação))</div>
+                <div id="offer-zinthos-spread-note" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; font-weight: 600;">Você irá pagar 0 nesta oferta e o usuário irá receber 0 (taxa de negociação)</div>
               </div>
               <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;">
                 <button type="button" class="btn-retro btn-sm" onclick="addOfferZinthos(100)">+100</button>
@@ -1610,6 +1621,11 @@
         </div>
         <div style="text-align: left; margin-bottom: 14px;">
           <label style="font-weight: 800; font-size: 13px; display: block; margin-bottom: 6px;">Escolha a pasta de destino:</label>
+          <div class="search-input-group" style="margin-bottom: 6px;">
+            <i class="fas fa-search"></i>
+            <input type="text" id="assign-col-filter-input" class="retro-input" placeholder="🔍 Digite para filtrar pasta..." autocomplete="off">
+            <button type="button" id="btn-clear-assign-col-filter" class="btn-retro btn-sm hidden" style="padding: 2px 8px; margin-right: 4px;" title="Limpar busca">&times;</button>
+          </div>
           <select id="assign-col-select" class="retro-select" style="width: 100%;"></select>
         </div>
         <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin: 0;">
@@ -1705,6 +1721,14 @@
 
         <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
           <input type="text" id="batch-add-search-input" class="retro-input" placeholder="Filtrar por nome ou anime..." style="flex: 1; min-width: 180px;" oninput="filterBatchAddCharacters()">
+          <select id="batch-add-rarity-select" class="retro-select" style="min-width: 120px;" onchange="filterBatchAddCharacters()">
+            <option value="">Todas</option>
+            <option value="LEGENDARY">⭐ Lendário</option>
+            <option value="EPIC">🟣 Épico</option>
+            <option value="RARE">🔵 Raro</option>
+            <option value="UNCOMMON">🟢 Incomum</option>
+            <option value="COMMON">⚪ Comum</option>
+          </select>
           <button type="button" class="btn-retro btn-sm" id="btn-batch-select-all" onclick="toggleSelectAllBatchAdd()">Selecionar Todos</button>
         </div>
         <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
@@ -1959,6 +1983,6 @@
 
   <script src="/vendor/cropper.min.js"></script>
   <script src="/js/api.js?v=20261113-modal-focus"></script>
-  <script src="/js/user.js?v=20261117-lock-system"></script>
+  <script src="/js/user.js?v=20261119-ux-improvements"></script>
 </body>
 </html>

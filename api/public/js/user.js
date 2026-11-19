@@ -1124,6 +1124,31 @@ function setupEventListeners() {
   document.getElementById('btn-clear-offer-waifus-search')?.addEventListener('click', () => {
     clearOfferWaifusSearch();
   });
+  document.getElementById('offer-waifus-rarity-select')?.addEventListener('change', () => {
+    filterOfferWaifus();
+  });
+  document.getElementById('offer-waifus-coveted-checkbox')?.addEventListener('change', () => {
+    filterOfferWaifus();
+  });
+
+  // Filtro de pastas no modal de atribuir coleção
+  const assignColFilterInput = document.getElementById('assign-col-filter-input');
+  if (assignColFilterInput) {
+    assignColFilterInput.addEventListener('input', () => {
+      if (typeof filterAssignCollectionSelect === 'function') {
+        filterAssignCollectionSelect();
+      }
+    });
+  }
+  document.getElementById('btn-clear-assign-col-filter')?.addEventListener('click', () => {
+    if (assignColFilterInput) {
+      assignColFilterInput.value = '';
+      assignColFilterInput.focus();
+    }
+    if (typeof filterAssignCollectionSelect === 'function') {
+      filterAssignCollectionSelect();
+    }
+  });
 
   // Paginação e atualização de ofertas enviadas
   document.getElementById('btn-my-offers-prev')?.addEventListener('click', () => {
@@ -1758,6 +1783,42 @@ function createPrivateHaremCard(entry, options = {}) {
   return card;
 }
 
+const divorcePreviewCache = new Map();
+
+function formatZinthosValue(val) {
+  return Number(val || 0).toLocaleString('pt-BR') + 'z';
+}
+
+async function loadLockedDivorcePreview(characterId, btnElement) {
+  if (divorcePreviewCache.has(characterId)) {
+    const val = divorcePreviewCache.get(characterId);
+    if (btnElement && btnElement.isConnected) {
+      btnElement.innerHTML = `<i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado (${formatZinthosValue(val)})`;
+    }
+    return val;
+  }
+
+  const auth = typeof getActiveAuthUser === 'function' ? getActiveAuthUser() : { isOwner: true, token: userSessionData?.token, publicId: userPublicId };
+  const token = auth?.token || userSessionData?.token;
+  const pId = auth?.publicId || userPublicId || 'token-session';
+  if (!token) return null;
+
+  try {
+    const res = await Api.get(`/api/web/user/${encodeURIComponent(pId)}/divorce/preview/${encodeURIComponent(characterId)}?token=${encodeURIComponent(token)}`);
+    if (res && res.success && res.data) {
+      const val = res.data.refundedKakera ?? res.data.fullRefundKakera ?? 0;
+      divorcePreviewCache.set(characterId, val);
+      if (btnElement && btnElement.isConnected) {
+        btnElement.innerHTML = `<i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado (${formatZinthosValue(val)})`;
+      }
+      return val;
+    }
+  } catch (err) {
+    // Falha silenciosa no preview do botão bloqueado
+  }
+  return null;
+}
+
 function openCardOptionsModal(charId) {
   const entry = haremEntryCache.get(charId);
   if (!entry) return;
@@ -1848,8 +1909,8 @@ function openCardOptionsModal(charId) {
     `}
     <!-- 6. Divorciar -->
     ${isCardLocked ? `
-      <button class="btn-retro btn-sm" style="width: 100%; opacity: 0.5; cursor: not-allowed;" title="Personagem ou coleção bloqueada" disabled>
-        <i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado
+      <button id="btn-card-options-locked-divorce" class="btn-retro btn-sm" style="width: 100%; opacity: 0.5; cursor: not-allowed;" title="Personagem ou coleção bloqueada" disabled>
+        <i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado ${divorcePreviewCache.has(char.id) ? `(${formatZinthosValue(divorcePreviewCache.get(char.id))})` : '(...)'}
       </button>
     ` : `
       <button class="btn-retro btn-sm btn-danger" style="width: 100%;" data-action="divorce">
@@ -1874,6 +1935,10 @@ function openCardOptionsModal(charId) {
   if (listEl) {
     listEl.innerHTML = html;
     bindCardOptionsActions(listEl, entry);
+    if (isCardLocked) {
+      const lockedDivBtn = document.getElementById('btn-card-options-locked-divorce');
+      loadLockedDivorcePreview(char.id, lockedDivBtn);
+    }
   }
   openModal('modal-card-options');
 }
@@ -2081,6 +2146,7 @@ async function toggleCollectionLock(collectionId) {
       token: userSessionToken,
     });
     if (res?.success) {
+      divorcePreviewCache.clear();
       Api.showToast(res.data?.message || 'Bloqueio da coleção atualizado!', res.data?.isLocked ? '🔒' : '🔓');
       loadUserData();
     } else {
@@ -2442,6 +2508,7 @@ async function toggleCharacterLock(characterId) {
       characterId,
     });
     if (res?.success) {
+      divorcePreviewCache.delete(characterId);
       Api.showToast(res.data?.message || 'Bloqueio do personagem atualizado!', res.data?.isLocked ? '🔒' : '🔓');
       loadUserData();
     } else {
@@ -2831,6 +2898,42 @@ function renderPublicHarem(harem) {
 /* ────────────────────────────────────────────────────────────────────────── */
 
 let currentAssignCharId = null;
+let assignModalCollections = [];
+let assignModalEffectiveColId = '';
+
+function renderAssignCollectionSelectOptions(selectedId, query = '') {
+  const selectEl = document.getElementById('assign-col-select');
+  if (!selectEl) return;
+  const normalizedQuery = (query || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim();
+  const filtered = normalizedQuery
+    ? assignModalCollections.filter(c => (c.name || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').includes(normalizedQuery))
+    : assignModalCollections;
+
+  selectEl.innerHTML = `
+    <option value="">-- Nenhuma (Harém Geral) --</option>
+    ${filtered.map(c => `
+      <option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>
+        📁 ${escapeHtml(c.name)} (${c.characterCount || 0} personagens)
+      </option>
+    `).join('')}
+  `;
+
+  if (selectedId && filtered.some(c => c.id === selectedId)) {
+    selectEl.value = selectedId;
+  } else {
+    selectEl.value = '';
+  }
+}
+
+function filterAssignCollectionSelect() {
+  const filterInput = document.getElementById('assign-col-filter-input');
+  const clearBtn = document.getElementById('btn-clear-assign-col-filter');
+  const selectEl = document.getElementById('assign-col-select');
+  const query = filterInput?.value || '';
+  if (clearBtn) clearBtn.classList.toggle('hidden', !query.trim());
+  const currentVal = selectEl?.value || assignModalEffectiveColId;
+  renderAssignCollectionSelectOptions(currentVal, query);
+}
 
 function openAssignCollectionModal(characterId, characterName, charImg, currentCollectionId) {
   const entry = haremEntryCache.get(characterId);
@@ -2849,7 +2952,7 @@ function openAssignCollectionModal(characterId, characterName, charImg, currentC
   if (imgEl) imgEl.src = charImg || '/media/characters/default.jpg';
 
   const collections = userSessionData?.collections || [];
-  const selectEl = document.getElementById('assign-col-select');
+  assignModalCollections = collections;
 
   // Recupera a última coleção salva para este personagem (ou atual, ou global recente)
   const lastForChar = localStorage.getItem(`waifu_last_col_${characterId}`) || '';
@@ -2861,22 +2964,14 @@ function openAssignCollectionModal(characterId, characterName, charImg, currentC
   } else if (!effectiveColId && lastGlobal && collections.some(c => c.id === lastGlobal)) {
     effectiveColId = lastGlobal;
   }
+  assignModalEffectiveColId = effectiveColId || '';
 
-  if (selectEl) {
-    selectEl.innerHTML = `
-      <option value="">-- Nenhuma (Harém Geral) --</option>
-      ${collections.map(c => `
-        <option value="${c.id}" ${c.id === effectiveColId ? 'selected' : ''}>
-          📁 ${escapeHtml(c.name)} (${c.characterCount || 0} personagens)
-        </option>
-      `).join('')}
-    `;
-    if (effectiveColId && collections.some(c => c.id === effectiveColId)) {
-      selectEl.value = effectiveColId;
-    } else {
-      selectEl.value = '';
-    }
-  }
+  const filterInput = document.getElementById('assign-col-filter-input');
+  if (filterInput) filterInput.value = '';
+  const clearBtn = document.getElementById('btn-clear-assign-col-filter');
+  if (clearBtn) clearBtn.classList.add('hidden');
+
+  renderAssignCollectionSelectOptions(effectiveColId, '');
 
   const currentCol = collections.find(c => c.id === currentCollectionId);
   const currentLabelEl = document.getElementById('assign-col-char-current');
@@ -3143,6 +3238,8 @@ function openBatchAddCharactersModal(colId, colName) {
 
   const searchInput = document.getElementById('batch-add-search-input');
   if (searchInput) searchInput.value = '';
+  const raritySelect = document.getElementById('batch-add-rarity-select');
+  if (raritySelect) raritySelect.value = '';
 
   filterBatchAddCharacters();
   openModal('modal-batch-add-collection');
@@ -3164,12 +3261,20 @@ function setBatchAddFilter(mode, btn) {
 function getBatchFilteredEntries() {
   const candidates = getBatchCandidateHaremEntries();
   const searchInput = document.getElementById('batch-add-search-input');
+  const raritySelect = document.getElementById('batch-add-rarity-select');
   const term = (searchInput?.value || '').toLowerCase().trim();
+  const selectedRarity = (raritySelect?.value || '').toUpperCase();
 
   return candidates.filter(entry => {
     // Filtro pelo modo do toggle
     if (batchCollectionFilterMode === 'outside' && entry.collectionId) return false;
     if (batchCollectionFilterMode === 'inside' && !entry.collectionId) return false;
+
+    // Filtro de raridade
+    if (selectedRarity) {
+      const charRarity = (entry.character?.baseRarity || entry.character?.rarity || 'COMMON').toUpperCase();
+      if (charRarity !== selectedRarity) return false;
+    }
 
     // Filtro de busca de texto
     if (term) {
@@ -5146,7 +5251,11 @@ async function openWaifuPreview(charId, charName, charImg, series, rarity, gende
           divBtn.disabled = true;
           divBtn.style.opacity = '0.5';
           divBtn.style.cursor = 'not-allowed';
-          divBtn.innerHTML = '<i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado';
+          const cachedVal = divorcePreviewCache.get(charId);
+          divBtn.innerHTML = `<i class="fas fa-lock"></i> 🔒 Divórcio Bloqueado ${cachedVal != null ? `(${formatZinthosValue(cachedVal)})` : '(...)'}`;
+          if (cachedVal == null) {
+            loadLockedDivorcePreview(charId, divBtn);
+          }
         } else {
           divBtn.innerHTML = '<i class="fas fa-heart-crack"></i> Divorciar';
           divBtn.onclick = () => { closeModal('modal-waifu-preview'); openDivorceModal(charId, cName); };
@@ -6306,6 +6415,10 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
 
   const offerSearchInput = document.getElementById('offer-waifus-search-input');
   if (offerSearchInput) offerSearchInput.value = '';
+  const raritySelect = document.getElementById('offer-waifus-rarity-select');
+  if (raritySelect) raritySelect.value = '';
+  const covCb = document.getElementById('offer-waifus-coveted-checkbox');
+  if (covCb) covCb.checked = false;
   const clearSearchBtn = document.getElementById('btn-clear-offer-waifus-search');
   if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
   const emptySearchEl = document.getElementById('offer-waifus-empty-search');
@@ -6315,6 +6428,12 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
     searchContainer.style.display = harem.length === 0 ? 'none' : '';
   }
 
+  const anyCoveted = harem.some(item => Number(item.activeCovetsCount || item.unseenCovetsCount || 0) > 0);
+  const covLabel = document.getElementById('offer-waifus-coveted-label');
+  if (covLabel) {
+    covLabel.style.display = anyCoveted ? 'flex' : 'none';
+  }
+
   if (harem.length === 0) {
     waifusList.innerHTML = '<div style="grid-column: 1 / -1; font-size: 12px; color: var(--text-muted); padding: 8px;">Você não possui waifus no harém para oferecer.</div>';
   } else {
@@ -6322,8 +6441,10 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
       const char = item.character;
       const k = item.keys || 1;
       const sm = k >= 10;
+      const r = (char.baseRarity || char.rarity || 'COMMON').toUpperCase();
+      const isCoveted = (Number(item.activeCovetsCount || item.unseenCovetsCount || 0) > 0) ? '1' : '0';
       return `
-        <label class="offer-waifu-card" title="${escapeHtml(char.name)} (${sm ? '💖' : '🔑'} ${k})" data-name="${escapeHtml(char.name || '')}" data-series="${escapeHtml(char.series || '')}">
+        <label class="offer-waifu-card" title="${escapeHtml(char.name)} (${sm ? '💖' : '🔑'} ${k})" data-name="${escapeHtml(char.name || '')}" data-series="${escapeHtml(char.series || '')}" data-rarity="${r}" data-coveted="${isCoveted}">
           <img decoding="async" src="${getCharImg(char)}" class="offer-waifu-img" onerror="handleImgError(this)" loading="lazy">
           <input type="checkbox" name="offer-waifu-cb" value="${escapeHtml(char.id)}" style="display: none;" onchange="this.closest('.offer-waifu-card').classList.toggle('is-selected', this.checked)">
           <div class="offer-waifu-overlay">
@@ -6476,12 +6597,17 @@ async function openOfferModal(listingId, characterName, imageUrl, interest) {
 
 function filterOfferWaifus() {
   const searchInput = document.getElementById('offer-waifus-search-input');
+  const raritySelect = document.getElementById('offer-waifus-rarity-select');
+  const covetedCheckbox = document.getElementById('offer-waifus-coveted-checkbox');
   const clearBtn = document.getElementById('btn-clear-offer-waifus-search');
   const emptyEl = document.getElementById('offer-waifus-empty-search');
   const listEl = document.getElementById('offer-waifus-list');
-  if (!searchInput || !listEl) return;
+  if (!listEl) return;
 
-  const query = (searchInput.value || '').trim();
+  const query = (searchInput?.value || '').trim();
+  const selectedRarity = (raritySelect?.value || '').toUpperCase();
+  const onlyCoveted = Boolean(covetedCheckbox?.checked);
+
   if (clearBtn) {
     clearBtn.classList.toggle('hidden', !query);
   }
@@ -6492,7 +6618,17 @@ function filterOfferWaifus() {
   cards.forEach(card => {
     const name = card.dataset.name || '';
     const series = card.dataset.series || '';
-    const match = matchesTextFilter(query, name, series);
+    const rarity = (card.dataset.rarity || '').toUpperCase();
+    const isCoveted = card.dataset.coveted === '1';
+
+    let match = matchesTextFilter(query, name, series);
+    if (match && selectedRarity) {
+      match = rarity === selectedRarity;
+    }
+    if (match && onlyCoveted) {
+      match = isCoveted;
+    }
+
     if (match) {
       card.style.display = '';
       visibleCount++;
@@ -6632,7 +6768,12 @@ async function submitMarketOffer() {
     amounts[field.label] = Math.max(0, Math.floor(raw));
     if (input && String(amounts[field.label]) !== String(input.value)) input.value = String(amounts[field.label]);
   }
-  const zinthos = amounts.Zinthos;
+  const netZinthos = amounts.Zinthos;
+  const zinthos = netZinthos > 0 ? Math.ceil(netZinthos / 0.95) : 0;
+  if (zinthos > getActiveBuyerKakera()) {
+    Api.showToast('Saldo insuficiente de Zinthos para cobrir esta oferta (incluindo taxa de negociação).', '⚠️');
+    return;
+  }
   const runas = amounts.Runas;
   const petalitas = amounts.Petalitas;
 
@@ -6878,16 +7019,17 @@ function updateOfferZinthosSpreadNote() {
   const note = document.getElementById('offer-zinthos-spread-note');
   if (!note) return;
   const raw = input ? parseInt(input.value, 10) : 0;
-  const val = Math.max(0, isNaN(raw) ? 0 : raw);
-  const net = Math.floor(val * 0.95);
-  note.textContent = `(O vendedor irá receber ${net.toLocaleString('pt-BR')} zinthos (descontado taxa de negociação))`;
+  const net = Math.max(0, isNaN(raw) ? 0 : raw);
+  const gross = net > 0 ? Math.ceil(net / 0.95) : 0;
+  note.textContent = `Você irá pagar ${gross.toLocaleString('pt-BR')} nesta oferta e o usuário irá receber ${net.toLocaleString('pt-BR')} (taxa de negociação)`;
 }
 window.updateOfferZinthosSpreadNote = updateOfferZinthosSpreadNote;
 
 function setOfferZinthosMax() {
-  const max = getActiveBuyerKakera();
+  const maxGross = getActiveBuyerKakera();
+  const maxReceivable = Math.max(0, Math.floor(maxGross * 0.95));
   const input = document.getElementById('offer-zinthos-input');
-  if (input) input.value = max;
+  if (input) input.value = maxReceivable;
   updateOfferZinthosSpreadNote();
 }
 window.setOfferZinthosMax = setOfferZinthosMax;
@@ -6903,8 +7045,9 @@ function addOfferZinthos(amount) {
   const input = document.getElementById('offer-zinthos-input');
   if (!input) return;
   const current = parseInt(input.value, 10) || 0;
-  const max = getActiveBuyerKakera();
-  input.value = Math.min(max, current + amount);
+  const maxGross = getActiveBuyerKakera();
+  const maxReceivable = Math.max(0, Math.floor(maxGross * 0.95));
+  input.value = Math.max(0, Math.min(maxReceivable, current + amount));
   updateOfferZinthosSpreadNote();
 }
 window.addOfferZinthos = addOfferZinthos;
