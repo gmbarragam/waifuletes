@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { verifyApiKey } from '../../plugins/auth.js';
 import { EconomySummaryService, PLAYERS_MAX_WINDOW_MS, windowError } from '../../services/EconomySummaryService.js';
 import { withBusinessSpan, setAttrs } from '../../telemetry.js';
+import { getEconomyParams } from '../../utils/economyParams.js';
 
 /** Maior epoch em ms representável por Date. */
 const MAX_EPOCH_MS = 8_640_000_000_000_000;
@@ -103,6 +104,23 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
       if ('success' in result && result.success === false) {
         return reply.status(400).send(result);
       }
+      return reply.send(result);
+    },
+  });
+
+  fastify.get('/internal/economy/params', {
+    schema: {
+      description:
+        'Parâmetros de balanceamento da economia de Zinthos (recompensas, custos, taxas, multiplicadores, limites e cooldowns) em mapa plano `<grupo>.<NOME>[.<chave>]`, para o painel da Ravena detectar mudanças de balanceamento. Só leitura; sem dados de jogador.',
+      tags: ['Kakera & Economia (Privado)'],
+      querystring: { type: 'object', properties: {}, additionalProperties: false },
+    },
+    handler: async (_request, reply) => {
+      const result = await withBusinessSpan('economy params', {}, async () => {
+        const params = getEconomyParams();
+        setAttrs({ 'waifu.economy.params': Object.keys(params.params).length });
+        return params;
+      });
       return reply.send(result);
     },
   });
