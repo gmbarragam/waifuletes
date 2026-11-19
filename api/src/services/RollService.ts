@@ -3,6 +3,7 @@ import { CooldownService, UserRollsState } from './CooldownService.js';
 import { CharacterService } from './CharacterService.js';
 import {
   calculateCharacterWeight,
+  calculateRollRankWeight,
   calculateWeeklyLegendaryMultiplier,
   RARITY_DIVORCE_VALUES,
   KAKERA_CRYSTAL_BASE,
@@ -23,6 +24,9 @@ interface CachedPoolItem {
   id: string;
   baseRarity: Rarity;
   gender: Gender;
+  isMythic?: boolean;
+  rank?: number | null;
+  rankWeight: number;
 }
 
 export class RollService {
@@ -101,6 +105,7 @@ export class RollService {
           baseRarity: true,
           gender: true,
           isMythic: true,
+          rank: true,
         },
       });
 
@@ -125,9 +130,20 @@ export class RollService {
         }
       }
 
-      this.inMemoryPool = items;
+      this.inMemoryPool = items.map((c: any) => ({
+        id: c.id,
+        baseRarity: c.baseRarity,
+        gender: c.gender,
+        isMythic: Boolean(c.isMythic),
+        rank: c.rank,
+        rankWeight: calculateRollRankWeight(
+          c.rank,
+          config.ROLL_RANK_MAX_DIFFICULTY,
+          config.ROLL_RANK_REF_CUTOFF
+        ),
+      }));
       this.poolLoaded = true;
-      setAttrs({ 'waifu.pool.size': items.length, 'waifu.pool.source': source }, span);
+      setAttrs({ 'waifu.pool.size': this.inMemoryPool.length, 'waifu.pool.source': source }, span);
     } finally {
       this.isLoadingPool = false;
     }
@@ -257,8 +273,8 @@ export class RollService {
         let specialTotalWeight = 0;
         let specialLegWeight = 0;
 
-        // Agrupa os itens normais por raridade (todos têm o mesmo peso exato)
-        const normalByRarity: Record<Rarity, string[]> = {
+        // Agrupa os itens normais por raridade com seus pesos de rank
+        const normalByRarity: Record<Rarity, { id: string; rankWeight: number }[]> = {
           COMMON: [],
           UNCOMMON: [],
           RARE: [],
@@ -279,6 +295,11 @@ export class RollService {
           const shares = investmentMap.get(char.id) ?? 0;
 
           const isMythic = Boolean((char as any).isMythic);
+          const rankWeight = (char as any).rankWeight ?? calculateRollRankWeight(
+            (char as any).rank,
+            config.ROLL_RANK_MAX_DIFFICULTY,
+            config.ROLL_RANK_REF_CUTOFF
+          );
 
           if (isWish || claimCount > 0 || shares > 0 || isMythic) {
             const effectiveRarity: Rarity = isMythic ? 'RARE' : char.baseRarity;
@@ -294,6 +315,7 @@ export class RollService {
               bonuses,
               investmentShares: shares,
               weeklyLegendaryMultiplier: effectiveRarity === 'LEGENDARY' ? weeklyLegMultiplier : undefined,
+              rollRankWeight: rankWeight / config.ROLL_RANK_MAX_DIFFICULTY,
             });
             if (weight > 0) {
               specialCandidates.push({ id: char.id, weight, rarity: effectiveRarity });
@@ -303,7 +325,7 @@ export class RollService {
               }
             }
           } else {
-            normalByRarity[char.baseRarity].push(char.id);
+            normalByRarity[char.baseRarity].push({ id: char.id, rankWeight });
           }
         }
 
@@ -400,8 +422,13 @@ export class RollService {
           }
 
           const tierList = normalByRarity[chosenRarity];
-          const randomIndex = Math.floor(Math.random() * tierList.length);
-          chosenId = tierList[randomIndex];
+          while (true) {
+            const candidate = tierList[Math.floor(Math.random() * tierList.length)];
+            if (Math.random() * config.ROLL_RANK_MAX_DIFFICULTY <= candidate.rankWeight) {
+              chosenId = candidate.id;
+              break;
+            }
+          }
         }
         setAttrs({ 'waifu.roll.candidates': candidates.length, 'waifu.roll.special_candidates': specialCandidates.length }, span);
         return { chosenId, special };

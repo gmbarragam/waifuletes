@@ -193,6 +193,7 @@ export interface WeightCalculationParams {
   bonuses?: RollBonuses;
   investmentShares?: number;
   weeklyLegendaryMultiplier?: number;
+  rollRankWeight?: number;
 }
 
 /**
@@ -218,6 +219,21 @@ export function calculateWeeklyLegendaryMultiplier(weeklyCount: number, hardCap:
   const ratio = (hardCap - weeklyCount) / hardCap;
   const mult = Math.pow(ratio, 1.5);
   return Math.max(0, Math.min(1.0, mult));
+}
+
+/**
+ * Calcula o multiplicador de peso de sorteio baseado no rank global (Mudae).
+ * Um personagem rank 1 tem peso 1.0 (7x mais difícil).
+ * Um personagem rank >= refCutoff (20.000) ou sem rank tem peso maxDiff (7.0).
+ */
+export function calculateRollRankWeight(
+  rank: number | null | undefined,
+  maxDiff: number = 7.0,
+  refCutoff: number = 20_000
+): number {
+  if (rank == null || rank >= refCutoff) return maxDiff;
+  if (rank <= 1) return 1.0;
+  return 1.0 + (maxDiff - 1.0) * ((rank - 1) / (refCutoff - 1));
 }
 
 export function calculateCharacterWeight(params: WeightCalculationParams): number {
@@ -278,6 +294,10 @@ export function calculateCharacterWeight(params: WeightCalculationParams): numbe
   if (params.investmentShares && params.investmentShares > 0) {
     const shareMult = params.investmentShares === 1 ? 4 : params.investmentShares === 2 ? 10 : 25;
     finalWeight *= shareMult;
+  }
+
+  if (typeof params.rollRankWeight === 'number' && params.rollRankWeight > 0) {
+    finalWeight *= params.rollRankWeight;
   }
 
   if (params.baseRarity === 'LEGENDARY' && params.weeklyLegendaryMultiplier !== undefined && params.weeklyLegendaryMultiplier <= 0) {
