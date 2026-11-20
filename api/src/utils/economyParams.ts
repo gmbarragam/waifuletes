@@ -3,6 +3,9 @@ import { config, activeHostingRates, inactiveHostingRates } from '../config.js';
 import {
   RARITY_BASE_WEIGHTS,
   KAKERA_CRYSTAL_BASE,
+  KAKERA_CRYSTAL_KEY_BONUS,
+  RANK_MULTIPLIER_MAX,
+  RANK_MULTIPLIER_EXPONENT,
   RARITY_DIVORCE_VALUES,
   RARITY_KEY_DIVORCE_BONUS,
   SOULMATE_DIVORCE_VALUES,
@@ -20,7 +23,16 @@ import {
   BASE_MONEY_SUPPLY,
   INFLATION_ALPHA,
   SCARCITY_BETA,
+  COMPETITOR_INVESTMENT_REFUND_RATE,
 } from '../services/MarketInvestmentService.js';
+import { MARKET_SELLER_NET_RATE } from '../services/MarketService.js';
+import {
+  DAILY_STREAK_MAX_DAYS,
+  DAILY_STREAK_BONUS_PERCENT,
+  DAILY_MIN_BASE_AMOUNT,
+  WISHLIST_DAILY_BONUS_DIVISOR,
+  WISHLIST_DAILY_MULTIPLIER_CAP,
+} from '../services/KakeraService.js';
 
 /**
  * Parâmetros de balanceamento da economia de Zinthos para o painel da Ravena (GET /internal/economy/params).
@@ -47,6 +59,7 @@ const GROUPS: Record<string, Record<string, Source>> = {
   roll: {
     RARITY_BASE_WEIGHTS,
     KAKERA_CRYSTAL_BASE,
+    KAKERA_CRYSTAL_KEY_BONUS,
     ROLL_MAX_BASE: config.ROLL_MAX_BASE,
     ROLL_REGEN_SECONDS: config.ROLL_REGEN_SECONDS,
     ROLL_REGEN_ACCEL_FACTOR: config.ROLL_REGEN_ACCEL_FACTOR,
@@ -71,6 +84,11 @@ const GROUPS: Record<string, Record<string, Source>> = {
     DAILY_RESET_HOUR_UTC: config.DAILY_RESET_HOUR_UTC,
     DAILY_RESET_MINUTE_UTC: config.DAILY_RESET_MINUTE_UTC,
     COOLDOWN_DAILY_SECONDS: config.COOLDOWN_DAILY_SECONDS,
+    DAILY_STREAK_MAX_DAYS,
+    DAILY_STREAK_BONUS_PERCENT,
+    DAILY_MIN_BASE_AMOUNT,
+    WISHLIST_DAILY_BONUS_DIVISOR,
+    WISHLIST_DAILY_MULTIPLIER_CAP,
   },
   limits: {
     RARITY_DAILY_MARRY_LIMITS,
@@ -85,6 +103,8 @@ const GROUPS: Record<string, Record<string, Source>> = {
     DIVORCE_PENALTY_RATE,
     DAILY_DIVORCE_TIER_RATES,
     DAILY_DIVORCE_MIN_RATE,
+    RANK_MULTIPLIER_MAX,
+    RANK_MULTIPLIER_EXPONENT,
   },
   market: {
     BASE_DAILY_ZINTHOS,
@@ -93,6 +113,8 @@ const GROUPS: Record<string, Record<string, Source>> = {
     INFLATION_ALPHA,
     SCARCITY_BETA,
     MARRIED_KEY_PROGRESSION_WEIGHTS,
+    COMPETITOR_INVESTMENT_REFUND_RATE,
+    MARKET_SELLER_NET_RATE,
   },
   hosting: {
     HOSTING_CONFISCO_PERMILLE: config.HOSTING_CONFISCO_PERMILLE,
