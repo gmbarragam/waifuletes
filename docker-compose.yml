@@ -3,6 +3,9 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      args:
+        # Commit da imagem (version em /internal/economy/params): GIT_SHA=$(git rev-parse --short HEAD) docker compose build
+        GIT_SHA: ${GIT_SHA:-}
     container_name: waifuletes-api
     restart: unless-stopped
     ports:
