@@ -22,6 +22,14 @@ ecossistema Ravena. A telemetria é **opcional** e fica **desligada por padrão*
 
 Para desligar: remova `OTEL_EXPORTER_OTLP_ENDPOINT` ou defina `OTEL_SDK_DISABLED=true`.
 
+### Versão do código na imagem (`GIT_SHA`)
+
+`GET /internal/economy/params` devolve `version` com o commit da imagem, que a ravena guarda junto de cada
+mudança de balanceamento detectada. Passe o commit no build (sem ele o build funciona e `version` vem `null`):
+```bash
+GIT_SHA=$(git rev-parse --short HEAD) docker compose build api && docker compose up -d api
+```
+
 ## Variáveis
 
 | Variável | Padrão | Efeito |
