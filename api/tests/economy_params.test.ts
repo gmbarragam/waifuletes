@@ -150,6 +150,8 @@ describe('📐 GET /internal/economy/params — parâmetros de balanceamento (Zi
       'roll.COOLDOWN_ROLL_SECONDS': config.COOLDOWN_ROLL_SECONDS,
       'roll.ROLL_SCRAP_BONUS_FACTOR': config.ROLL_SCRAP_BONUS_FACTOR,
       'roll.ROLL_SCRAP_BONUS_CAP': config.ROLL_SCRAP_BONUS_CAP,
+      'roll.ROLL_RANK_MAX_DIFFICULTY': config.ROLL_RANK_MAX_DIFFICULTY,
+      'roll.ROLL_RANK_REF_CUTOFF': config.ROLL_RANK_REF_CUTOFF,
       ...flat('claim.RARITY_CLAIM_COOLDOWNS', cooldown.RARITY_CLAIM_COOLDOWNS),
       'claim.COOLDOWN_CLAIM_SECONDS': config.COOLDOWN_CLAIM_SECONDS,
       'claim.CLAIM_LOCK_SECONDS': config.CLAIM_LOCK_SECONDS,
