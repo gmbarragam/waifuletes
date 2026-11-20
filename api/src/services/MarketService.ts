@@ -21,6 +21,12 @@ export interface CreateOfferData {
   };
 }
 
+/**
+ * Fração dos Zinthos de uma oferta aceita que chega ao vendedor (arredondada para baixo): 1 − taxa de spread de
+ * 5%, que é queimada. A reversão da troca desconta do vendedor o mesmo valor líquido.
+ */
+export const MARKET_SELLER_NET_RATE = 0.95;
+
 export const UNLISTED_OFFER_REJECTION_REASON = 'Personagem não está mais anunciado';
 
 export const UNLISTED_OFFER_REJECTION_DATA = {
@@ -1362,7 +1368,7 @@ export class MarketService {
           if (debited.count !== 1) {
             throw new DomainError('INSUFFICIENT_FUNDS', 'O proponente não possui mais os Zinthos ofertados.');
           }
-          const sellerNetZinthos = Math.floor(offeredZinthos * 0.95);
+          const sellerNetZinthos = Math.floor(offeredZinthos * MARKET_SELLER_NET_RATE);
           const spreadFee = offeredZinthos - sellerNetZinthos;
           setAttrs({ 'waifu.market.zinthos': offeredZinthos, 'waifu.market.spread_fee': spreadFee });
 
@@ -1860,7 +1866,7 @@ export class MarketService {
 
     // 3. Valida se o Vendedor possui saldo suficiente de Zinthos para devolução (descontando o spread original)
     const offeredZinthos = Number(offered.zinthos) || 0;
-    const sellerDeductZinthos = offeredZinthos > 0 ? Math.floor(offeredZinthos * 0.95) : 0;
+    const sellerDeductZinthos = offeredZinthos > 0 ? Math.floor(offeredZinthos * MARKET_SELLER_NET_RATE) : 0;
     if (sellerDeductZinthos > 0) {
       const seller = await this.prisma.user.findUnique({
         where: { id: offer.sellerId },

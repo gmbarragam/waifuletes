@@ -3,6 +3,7 @@ import { CooldownService } from './CooldownService.js';
 import { CharacterService } from './CharacterService.js';
 import { UserService } from './UserService.js';
 import { config } from '../config.js';
+import { COMPETITOR_INVESTMENT_REFUND_RATE } from './MarketInvestmentService.js';
 import { withBusinessSpan, chatIdAttr, userIdAttr, addEvent, setAttrs } from '../telemetry.js';
 
 export interface MarryParams {
@@ -185,7 +186,7 @@ export class MarryService {
         });
 
         for (const comp of competitors) {
-          const refundAmount = Math.floor(comp.totalZinthos * 0.5);
+          const refundAmount = Math.floor(comp.totalZinthos * COMPETITOR_INVESTMENT_REFUND_RATE);
 
           await tx.user.update({
             where: { id: comp.userId },
