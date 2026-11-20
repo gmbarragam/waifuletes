@@ -16,6 +16,27 @@ export const RECEIVED_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 /** Maior janela aceita em /internal/economy/players (8 dias). */
 export const PLAYERS_MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 
+/** Tolerância de relógio para `to` no futuro. */
+export const FUTURE_TOLERANCE_MS = 60_000;
+
+/**
+ * Teto de cada consulta das rotas da economia (`SET LOCAL statement_timeout`), abaixo do timeout de 60 s da
+ * ravena: uma consulta que passe disso é cancelada no Postgres em vez de seguir rodando depois que a ravena
+ * desistiu. Não há teto de janela: a carga inicial da ravena pede [0, início do backfill) de uma vez.
+ */
+export const ECONOMY_STATEMENT_TIMEOUT_MS = 50_000;
+
+/**
+ * Confere a janela [from, to) das rotas da economia. Devolve a mensagem de erro (código INVALID_WINDOW) ou
+ * null se a janela é válida. `maxWindowMs` limita o tamanho (rota por jogador).
+ */
+export function windowError(from: number, to: number, now: number, maxWindowMs?: number): string | null {
+  if (!(to > from)) return '`to` deve ser maior que `from`.';
+  if (to > now + FUTURE_TOLERANCE_MS) return '`to` não pode estar no futuro.';
+  if (maxWindowMs !== undefined && to - from > maxWindowMs) return `A janela não pode passar de ${maxWindowMs / 86_400_000} dias.`;
+  return null;
+}
+
 /**
  * O ADMIN_GRANT junta coisas diferentes (câmbio do banco da Ravena, bônus de doador, prêmio do caça-níquel,
  * edição no painel, concessão manual). Quem chama distingue pelo metadata: `metadata.reason` (banco da
@@ -95,8 +116,14 @@ export interface EconomyReceivedQuintile {
  * desde o divórcio anterior do mesmo personagem (ou desde sempre, no primeiro ciclo).
  * - paid: soma do que os divórcios pagaram;
  * - quotaCost: soma do custo das cotas do ciclo de cada divórcio;
- * - aboveCost: divórcios que pagaram pelo menos o custo das cotas (custo 0 conta como acima);
+ * - aboveCost: divórcios com custo de cotas > 0 que pagaram MAIS que esse custo (o ciclo deu lucro);
+ * - withoutQuota: divórcios sem cotas compradas no ciclo (custo 0): não entram em aboveCost nem em maxReturn;
  * - maxReturn: maior paid/quotaCost entre os divórcios com custo > 0 (null se nenhum).
+ * Fora da conta (o custo sai menor que o real ou o ciclo não aparece):
+ * - cotas compradas como investimento (MARKET_BUY com metadata.type = INVESTMENT_SHARE_PURCHASE) antes de casar
+ *   com o personagem, que viram cotas do casamento;
+ * - divórcio feito pelo admin, que não gera linha DIVORCE no extrato;
+ * - waifu confiscada pela taxa de hospedagem (HOSTING_FEE_WAIFU), que encerra o ciclo sem divórcio.
  */
 export interface EconomySoulmateCycleHour {
   hour: number;
@@ -104,6 +131,7 @@ export interface EconomySoulmateCycleHour {
   paid: number;
   quotaCost: number;
   aboveCost: number;
+  withoutQuota: number;
   maxReturn: number | null;
 }
 
@@ -166,6 +194,21 @@ const tsFromMs = (ms: number) => Prisma.sql`(TIMESTAMP '1970-01-01 00:00:00' + (
 
 export class EconomySummaryService {
   constructor(private prisma: PrismaClient) {}
+
+  /**
+   * Roda as consultas num único retrato (REPEATABLE READ), em transação somente leitura e com
+   * statement_timeout de ECONOMY_STATEMENT_TIMEOUT_MS. Devolve só os resultados das consultas.
+   */
+  private async readOnlySnapshot(queries: any[]): Promise<any[][]> {
+    const setup = [
+      this.prisma.$executeRawUnsafe('SET TRANSACTION READ ONLY'),
+      this.prisma.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(ECONOMY_STATEMENT_TIMEOUT_MS)}`),
+    ];
+    const results = (await this.prisma.$transaction([...setup, ...queries] as any, {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    })) as any[];
+    return results.slice(setup.length) as any[][];
+  }
 
   async getSummary(
     from: number,
@@ -269,15 +312,24 @@ export class EconomySummaryService {
     // próprio dono daquele personagem desde o divórcio anterior dele (mesmo usuário e personagem, de alma
     // gêmea ou não). Os dois LATERAL usam o índice (userId, createdAt) do extrato.
     const soulmateQuery = this.prisma.$queryRaw<
-      Array<{ hour: bigint; divorces: bigint; paid: bigint; quota_cost: bigint; above_cost: bigint; max_return: number | null }>
+      Array<{
+        hour: bigint;
+        divorces: bigint;
+        paid: bigint;
+        quota_cost: bigint;
+        above_cost: bigint;
+        without_quota: bigint;
+        max_return: number | null;
+      }>
     >`
       SELECT
         (EXTRACT(EPOCH FROM date_trunc('hour', d."createdAt"))::bigint * 1000) AS hour,
         COUNT(*)::bigint AS divorces,
         COALESCE(SUM(d.amount), 0)::bigint AS paid,
         COALESCE(SUM(c.cost), 0)::bigint AS quota_cost,
-        COUNT(*) FILTER (WHERE d.amount >= c.cost)::bigint AS above_cost,
-        MAX(d.amount::float8 / c.cost) FILTER (WHERE c.cost > 0) AS max_return
+        COUNT(*) FILTER (WHERE c.cost > 0 AND d.amount > c.cost)::bigint AS above_cost,
+        COUNT(*) FILTER (WHERE c.cost <= 0)::bigint AS without_quota,
+        MAX(d.amount::float8 / NULLIF(c.cost, 0)) FILTER (WHERE c.cost > 0) AS max_return
       FROM kakera_transactions d
       CROSS JOIN LATERAL (
         SELECT MAX(p."createdAt") AS at
@@ -292,7 +344,7 @@ export class EconomySummaryService {
         FROM kakera_transactions b
         WHERE b."userId" = d."userId"
           AND b."createdAt" < d."createdAt"
-          AND (prev.at IS NULL OR b."createdAt" > prev.at)
+          AND b."createdAt" > COALESCE(prev.at, '-infinity'::timestamp)
           AND b.reason = 'MARKET_BUY'
           AND b.metadata->>'type' = 'MARRIED_SHARE_PURCHASE'
           AND b.metadata->>'characterId' = d.metadata->>'characterId'
@@ -310,9 +362,7 @@ export class EconomySummaryService {
     const queries: any[] = [flowsQuery, soulmateQuery];
     if (includeBalances) queries.push(totalsQuery, holdersQuery, quintilesQuery);
     if (includeReceived) queries.push(receivedQuery);
-    const results = (await this.prisma.$transaction(queries as any, {
-      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
-    })) as any[][];
+    const results = await this.readOnlySnapshot(queries);
     const [flowRows, soulmateRows, totalsRows = [], holdersRows = [], quintileRows = [], receivedRows = []] = results;
 
     const flows: EconomyFlow[] = flowRows.map((r) => ({
@@ -330,6 +380,7 @@ export class EconomySummaryService {
       paid: num(r.paid),
       quotaCost: num(r.quota_cost),
       aboveCost: num(r.above_cost),
+      withoutQuota: num(r.without_quota),
       maxReturn: numOrNull(r.max_return),
     }));
 
@@ -386,8 +437,8 @@ export class EconomySummaryService {
   }
 
   /**
-   * Recorte por jogador para o painel: todo usuário com saldo diferente de zero ou com pelo menos uma linha
-   * do extrato em [from, to), e os fluxos de cada um por motivo na janela. A soma dos fluxos de todos os
+   * Recorte por jogador para o painel: todo usuário com saldo atual diferente de zero, com saldo no fim da
+   * janela (balanceAtWindowEnd) diferente de zero ou com pelo menos uma linha do extrato em [from, to), e os fluxos de cada um por motivo na janela. A soma dos fluxos de todos os
    * jogadores bate com a soma de ledger.flows do resumo na mesma janela (mesma chave de motivo).
    */
   async getPlayers(from: number, to: number, now: number = Date.now()): Promise<EconomyPlayers> {
@@ -414,6 +465,8 @@ export class EconomySummaryService {
         GROUP BY "userId"
       ) a ON a."userId" = u.id
       WHERE u.kakera <> 0
+         -- Tinha saldo no fim da janela e gastou tudo depois: entra no dia mesmo sem movimento nele.
+         OR u.kakera - COALESCE(a.after_to, 0) <> 0
          OR EXISTS (
            SELECT 1 FROM kakera_transactions t
            WHERE t."userId" = u.id AND t."createdAt" >= ${fromTs} AND t."createdAt" < ${toTs}
@@ -436,9 +489,7 @@ export class EconomySummaryService {
     `;
 
     // Um único retrato (REPEATABLE READ): todo jogador com fluxo na janela está em players.
-    const [playerRows, flowRows] = (await this.prisma.$transaction([playersQuery, flowsQuery] as any, {
-      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
-    })) as any[][];
+    const [playerRows, flowRows] = await this.readOnlySnapshot([playersQuery, flowsQuery]);
 
     return {
       currency: 'zinthos',

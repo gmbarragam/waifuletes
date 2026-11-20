@@ -1,10 +1,8 @@
 import { FastifyPluginAsync } from 'fastify';
 import { verifyApiKey } from '../../plugins/auth.js';
-import { EconomySummaryService, PLAYERS_MAX_WINDOW_MS } from '../../services/EconomySummaryService.js';
+import { EconomySummaryService, PLAYERS_MAX_WINDOW_MS, windowError } from '../../services/EconomySummaryService.js';
 import { withBusinessSpan, setAttrs } from '../../telemetry.js';
 
-/** Tolerância de relógio para `to` no futuro. */
-const FUTURE_TOLERANCE_MS = 60_000;
 /** Maior epoch em ms representável por Date. */
 const MAX_EPOCH_MS = 8_640_000_000_000_000;
 
@@ -50,12 +48,8 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
           'waifu.economy.balances': balances !== 0,
         },
         async () => {
-          if (!(to > from)) {
-            return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` deve ser maior que `from`.' } };
-          }
-          if (to > now + FUTURE_TOLERANCE_MS) {
-            return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` não pode estar no futuro.' } };
-          }
+          const invalid = windowError(from, to, now);
+          if (invalid) return { success: false as const, error: { code: 'INVALID_WINDOW', message: invalid } };
           const summary = await economyService.getSummary(from, to, now, { received: received === 1, balances: balances !== 0 });
           setAttrs({
             'waifu.economy.flow_rows': summary.ledger.flows.length,
@@ -95,15 +89,8 @@ export const privateEconomyRoutes: FastifyPluginAsync = async (fastify) => {
         'economy players',
         { 'waifu.economy.window_ms': to - from },
         async () => {
-          if (!(to > from)) {
-            return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` deve ser maior que `from`.' } };
-          }
-          if (to > now + FUTURE_TOLERANCE_MS) {
-            return { success: false as const, error: { code: 'INVALID_WINDOW', message: '`to` não pode estar no futuro.' } };
-          }
-          if (to - from > PLAYERS_MAX_WINDOW_MS) {
-            return { success: false as const, error: { code: 'INVALID_WINDOW', message: 'A janela não pode passar de 8 dias.' } };
-          }
+          const invalid = windowError(from, to, now, PLAYERS_MAX_WINDOW_MS);
+          if (invalid) return { success: false as const, error: { code: 'INVALID_WINDOW', message: invalid } };
           const players = await economyService.getPlayers(from, to, now);
           setAttrs({
             'waifu.economy.players': players.players.length,

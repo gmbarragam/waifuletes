@@ -440,10 +440,13 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
         // h32: divórcio que não é de alma gêmea é ignorado (mesmo com cotas).
         buy(hid(32), 100, 'soul_c', H - HOUR),
         divorce(hid(32), 30, 'soul_c', H + 15 * MIN, false),
-        // h33: alma gêmea sem cotas compradas (custo 0 conta como acima do custo; fora do maxReturn).
+        // h33: alma gêmea sem cotas compradas (custo 0: conta em withoutQuota, não em aboveCost nem no maxReturn).
         divorce(hid(33), 80, 'soul_d', H + HOUR + 10 * MIN, true),
-        // h34: mesmo personagem de h30, mas as cotas de h30 não contam para outro jogador.
+        // h34: mesmo personagem de h30, mas as cotas de h30 não contam para outro jogador (também sem cotas).
         divorce(hid(34), 10, 'soul_a', H + HOUR + 20 * MIN, true),
+        // h35 (hora H + 2h): pagou exatamente o custo das cotas: não está acima do custo.
+        buy(hid(35), 70, 'soul_e', H + HOUR + 50 * MIN),
+        divorce(hid(35), 70, 'soul_e', H + 2 * HOUR + 5 * MIN, true),
       ];
       const rows = await prisma.$transaction(data.map((d: any) => prisma.kakeraTransaction.create({ data: d })));
       ids = rows.map((r: any) => r.id);
@@ -453,16 +456,23 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       if (ids.length) await server.prisma.kakeraTransaction.deleteMany({ where: { id: { in: ids } } });
     });
 
-    const hourH = { hour: H, divorces: 2, paid: 650, quotaCost: 400, aboveCost: 1, maxReturn: 4 };
-    const hourH1 = { hour: H + HOUR, divorces: 3, paid: 150, quotaCost: 50, aboveCost: 3, maxReturn: 1.2 };
+    const hourH = { hour: H, divorces: 2, paid: 650, quotaCost: 400, aboveCost: 1, withoutQuota: 0, maxReturn: 4 };
+    const hourH1 = { hour: H + HOUR, divorces: 3, paid: 150, quotaCost: 50, aboveCost: 1, withoutQuota: 2, maxReturn: 1.2 };
 
-    it('agrega por hora: divórcios, pago, custo das cotas, acima do custo e maior retorno', async () => {
+    it('agrega por hora: divórcios, pago, custo das cotas, acima do custo, sem cotas e maior retorno', async () => {
       const res = await get(`/internal/economy/summary?from=${H}&to=${H + 2 * HOUR}`);
       expect(res.statusCode).toBe(200);
       const cycle = res.json().soulmateCycle;
       expect(cycle).toHaveLength(2);
       expect(cycle[0]).toEqual({ ...hourH, maxReturn: expect.closeTo(4, 10) });
       expect(cycle[1]).toEqual({ ...hourH1, maxReturn: expect.closeTo(1.2, 10) });
+    });
+
+    it('pagar exatamente o custo das cotas não conta como acima do custo', async () => {
+      const res = await get(`/internal/economy/summary?from=${H + 2 * HOUR}&to=${H + 3 * HOUR}&balances=0`);
+      expect(res.json().soulmateCycle).toEqual([
+        { hour: H + 2 * HOUR, divorces: 1, paid: 70, quotaCost: 70, aboveCost: 0, withoutQuota: 0, maxReturn: 1 },
+      ]);
     });
 
     it('divórcio anterior fora da janela ainda limita o ciclo', async () => {
@@ -636,6 +646,24 @@ describe('📊 GET /internal/economy/summary — resumo da economia (Zinthos)', 
       } finally {
         await prisma.kakeraTransaction.deleteMany({ where: { id: { in: rows.map((r: any) => r.id) } } });
         await prisma.user.update({ where: { id: hid(50) }, data: { kakera: { decrement: 123 - 40 } } });
+      }
+    });
+
+    it('quem tinha saldo no fim da janela, não movimentou nela e hoje está zerado continua no dia', async () => {
+      // econ_zero_3 tem saldo 0 hoje, mas gastou 77 depois da janela: no fim dela tinha 77.
+      const at = Date.UTC(2026, 5, 15, 12, 0, 0);
+      const row = await server.prisma.kakeraTransaction.create({
+        data: { userId: 'econ_zero_3', amount: -77, reason: 'MARKET_BUY', createdAt: new Date(at) },
+      });
+      try {
+        const day = (await players(`from=${at - DAY}&to=${at - HOUR}`)).json();
+        expect(day.players.find((p: any) => p.id === 'econ_zero_3')).toMatchObject({ balance: 0, balanceAtWindowEnd: 77 });
+        expect(day.flows.some((f: any) => f.id === 'econ_zero_3')).toBe(false);
+        // Depois do gasto, zerado e sem movimento: fica de fora.
+        const later = (await players(`from=${at + HOUR}&to=${at + 2 * HOUR}`)).json();
+        expect(later.players.map((p: any) => p.id)).not.toContain('econ_zero_3');
+      } finally {
+        await server.prisma.kakeraTransaction.delete({ where: { id: row.id } });
       }
     });
 
