@@ -7,10 +7,12 @@ import {
   calculateWeeklyLegendaryMultiplier,
   RARITY_DIVORCE_VALUES,
   KAKERA_CRYSTAL_BASE,
+  KAKERA_CRYSTAL_KEY_BONUS,
   RARITY_BASE_WEIGHTS,
   RollBonuses,
 } from '../utils/rarityCalculator.js';
 import { config, getLegendaryChanceCap } from '../config.js';
+import { COMPETITOR_INVESTMENT_REFUND_RATE } from './MarketInvestmentService.js';
 import { withBusinessSpan, withSpan, setAttrs, addEvent, chatIdAttr, userIdAttr, recordError, withTxSpans, context, trace, type Span } from '../telemetry.js';
 
 export interface RollOptions {
@@ -595,7 +597,7 @@ export class RollService {
           } else {
             // Outro usuário é dono -> cristal de kakera
             const crystalBase = KAKERA_CRYSTAL_BASE[chosen.baseRarity] ?? 10;
-            kakeraCrystalValue = crystalBase + existingHaremEntry.keys * 5;
+            kakeraCrystalValue = crystalBase + existingHaremEntry.keys * KAKERA_CRYSTAL_KEY_BONUS;
           }
         } else if (rollerShares > 0) {
           // CASAMENTO INSTANTÂNEO POR COTA!
@@ -634,7 +636,7 @@ export class RollService {
             });
 
             for (const comp of competitors) {
-              const refundAmount = Math.floor(comp.totalZinthos * 0.5);
+              const refundAmount = Math.floor(comp.totalZinthos * COMPETITOR_INVESTMENT_REFUND_RATE);
 
               await tx.user.update({
                 where: { id: comp.userId },

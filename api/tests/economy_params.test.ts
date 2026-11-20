@@ -17,24 +17,36 @@ const { config, activeHostingRates, inactiveHostingRates } = await import('../sr
 const rarity = await import('../src/utils/rarityCalculator.js');
 const cooldown = await import('../src/services/CooldownService.js');
 const market = await import('../src/services/MarketInvestmentService.js');
+const marketplace = await import('../src/services/MarketService.js');
+const kakera = await import('../src/services/KakeraService.js');
 
 const ROUTE = '/internal/economy/params';
 const API_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * Arquivos de onde saem as constantes de balanceamento. Toda `export const NOME_EM_MAIUSCULAS` deles precisa
- * estar na rota ou em IGNORED_CONSTANTS; toda chave de config.ts, na rota ou em IGNORED_CONFIG_KEYS.
+ * Arquivos de onde saem as constantes de balanceamento. Toda `export const NOME_EM_MAIUSCULAS` deles, e toda
+ * `const NOME_EM_MAIUSCULAS = <número>` sem export, precisa estar na rota ou em IGNORED_CONSTANTS; toda chave
+ * de config.ts, na rota ou em IGNORED_CONFIG_KEYS.
  */
 const SOURCE_FILES = [
   'src/utils/rarityCalculator.ts',
   'src/services/CooldownService.ts',
   'src/services/MarketInvestmentService.ts',
   'src/services/HostingFeeService.ts',
+  'src/services/MarketService.ts',
+  'src/services/RollService.ts',
+  'src/services/MarryService.ts',
+  'src/services/KakeraService.ts',
   'src/config.ts',
 ];
 
 const IGNORED_CONSTANTS: Record<string, string> = {
   ALL_RARITIES: 'lista das raridades (enum), não é valor de balanceamento',
+  UNLISTED_OFFER_REJECTION_REASON: 'texto do motivo de recusa de oferta',
+  UNLISTED_OFFER_REJECTION_DATA: 'campos gravados na oferta recusada, sem valor de moeda',
+  RUN_LOCK_TTL_SECONDS: 'trava de execução da taxa de hospedagem (infraestrutura)',
+  DONE_LOCK_TTL_SECONDS: 'marca de "já executado hoje" da taxa de hospedagem (infraestrutura)',
+  TX_TIMEOUT_MS: 'timeout da transação da taxa de hospedagem (infraestrutura)',
 };
 
 const IGNORED_CONFIG_KEYS: Record<string, string> = {
@@ -142,6 +154,7 @@ describe('📐 GET /internal/economy/params — parâmetros de balanceamento (Zi
     const expected = {
       ...flat('roll.RARITY_BASE_WEIGHTS', rarity.RARITY_BASE_WEIGHTS),
       ...flat('roll.KAKERA_CRYSTAL_BASE', rarity.KAKERA_CRYSTAL_BASE),
+      'roll.KAKERA_CRYSTAL_KEY_BONUS': rarity.KAKERA_CRYSTAL_KEY_BONUS,
       'roll.ROLL_MAX_BASE': config.ROLL_MAX_BASE,
       'roll.ROLL_REGEN_SECONDS': config.ROLL_REGEN_SECONDS,
       'roll.ROLL_REGEN_ACCEL_FACTOR': config.ROLL_REGEN_ACCEL_FACTOR,
@@ -162,6 +175,11 @@ describe('📐 GET /internal/economy/params — parâmetros de balanceamento (Zi
       'daily.DAILY_RESET_HOUR_UTC': config.DAILY_RESET_HOUR_UTC,
       'daily.DAILY_RESET_MINUTE_UTC': config.DAILY_RESET_MINUTE_UTC,
       'daily.COOLDOWN_DAILY_SECONDS': config.COOLDOWN_DAILY_SECONDS,
+      'daily.DAILY_STREAK_MAX_DAYS': kakera.DAILY_STREAK_MAX_DAYS,
+      ...flat('daily.DAILY_STREAK_BONUS_PERCENT', kakera.DAILY_STREAK_BONUS_PERCENT),
+      'daily.DAILY_MIN_BASE_AMOUNT': kakera.DAILY_MIN_BASE_AMOUNT,
+      'daily.WISHLIST_DAILY_BONUS_DIVISOR': kakera.WISHLIST_DAILY_BONUS_DIVISOR,
+      'daily.WISHLIST_DAILY_MULTIPLIER_CAP': kakera.WISHLIST_DAILY_MULTIPLIER_CAP,
       ...flat('limits.RARITY_DAILY_MARRY_LIMITS', cooldown.RARITY_DAILY_MARRY_LIMITS),
       ...flat('limits.RARITY_DAILY_TRADE_LIMITS', cooldown.RARITY_DAILY_TRADE_LIMITS),
       ...flat('divorce.RARITY_DIVORCE_VALUES', rarity.RARITY_DIVORCE_VALUES),
@@ -172,12 +190,16 @@ describe('📐 GET /internal/economy/params — parâmetros de balanceamento (Zi
       'divorce.DIVORCE_PENALTY_RATE': rarity.DIVORCE_PENALTY_RATE,
       ...flat('divorce.DAILY_DIVORCE_TIER_RATES', rarity.DAILY_DIVORCE_TIER_RATES),
       'divorce.DAILY_DIVORCE_MIN_RATE': rarity.DAILY_DIVORCE_MIN_RATE,
+      'divorce.RANK_MULTIPLIER_MAX': rarity.RANK_MULTIPLIER_MAX,
+      'divorce.RANK_MULTIPLIER_EXPONENT': rarity.RANK_MULTIPLIER_EXPONENT,
       'market.BASE_DAILY_ZINTHOS': market.BASE_DAILY_ZINTHOS,
       ...flat('market.RARITY_DAYS', market.RARITY_DAYS),
       'market.BASE_MONEY_SUPPLY': market.BASE_MONEY_SUPPLY,
       'market.INFLATION_ALPHA': market.INFLATION_ALPHA,
       ...flat('market.SCARCITY_BETA', market.SCARCITY_BETA),
       ...flat('market.MARRIED_KEY_PROGRESSION_WEIGHTS', rarity.MARRIED_KEY_PROGRESSION_WEIGHTS),
+      'market.COMPETITOR_INVESTMENT_REFUND_RATE': market.COMPETITOR_INVESTMENT_REFUND_RATE,
+      'market.MARKET_SELLER_NET_RATE': marketplace.MARKET_SELLER_NET_RATE,
       'hosting.HOSTING_CONFISCO_PERMILLE': config.HOSTING_CONFISCO_PERMILLE,
       'hosting.HOSTING_GRACE_HOURS': config.HOSTING_GRACE_HOURS,
       ...flat('hosting.HOSTING_TAXAS_ATIVAS', activeHostingRates),
@@ -197,11 +219,44 @@ describe('📐 GET /internal/economy/params — parâmetros de balanceamento (Zi
     for (const file of SOURCE_FILES) {
       const src = readFileSync(path.join(API_DIR, file), 'utf8');
       for (const m of src.matchAll(/export const ([A-Z][A-Z0-9_]+)/g)) found.add(m[1]);
+      // Constante numérica sem export (também dentro de função): exporte e exponha, ou ignore com o motivo.
+      for (const m of src.matchAll(/^\s*const ([A-Z][A-Z0-9_]+)\s*(?::\s*number\s*)?=\s*[-+(]?\d/gm)) found.add(m[1]);
     }
     const missing = [...found].filter((n) => !exposed.has(n) && !(n in IGNORED_CONSTANTS));
     expect(missing, 'constante nova: exponha em utils/economyParams.ts ou ignore aqui com o motivo').toEqual([]);
     // Lista de ignoradas sem entradas velhas.
     expect(Object.keys(IGNORED_CONSTANTS).filter((n) => !found.has(n))).toEqual([]);
+  });
+
+  it('valores das constantes extraídas de números soltos (iguais aos de antes)', async () => {
+    const { params } = (await get()).json();
+    expect(params['market.MARKET_SELLER_NET_RATE']).toBe(0.95);
+    expect(params['market.COMPETITOR_INVESTMENT_REFUND_RATE']).toBe(0.5);
+    expect(params['roll.KAKERA_CRYSTAL_KEY_BONUS']).toBe(5);
+    expect(params['daily.DAILY_STREAK_MAX_DAYS']).toBe(7);
+    expect(kakera.DAILY_STREAK_BONUS_PERCENT).toEqual({ 1: 0, 2: 10, 3: 20, 4: 30, 5: 40, 6: 50, 7: 100 });
+    expect(params['daily.DAILY_MIN_BASE_AMOUNT']).toBe(100);
+    expect(params['daily.WISHLIST_DAILY_BONUS_DIVISOR']).toBe(1000);
+    expect(params['daily.WISHLIST_DAILY_MULTIPLIER_CAP']).toBe(2);
+    expect(params['divorce.RANK_MULTIPLIER_MAX']).toBe(7);
+    expect(params['divorce.RANK_MULTIPLIER_EXPONENT']).toBe(3);
+    // Curva do multiplicador de rank igual à fórmula antiga (1 + 6 · ratio³, piso 1, posição 1 = 7).
+    const old = (position: number, total: number) => {
+      if (!total || total <= 1 || !position || position < 1) return 1.0;
+      if (position === 1) return 7.0;
+      if (position >= total) return 1.0;
+      const ratio = Math.max(0, 1.0 - (position - 1) / total);
+      return Number(Math.max(1.0, 1.0 + 6.0 * Math.pow(ratio, 3)).toFixed(4));
+    };
+    for (const total of [0, 1, 2, 10, 137, 1000]) {
+      for (let p = 0; p <= total + 1; p++) expect(rarity.calculateRankMultiplier(p, total)).toBe(old(p, total));
+    }
+  });
+
+  it('guarda: a regra também pega constante numérica sem export', () => {
+    const re = /^\s*const ([A-Z][A-Z0-9_]+)\s*(?::\s*number\s*)?=\s*[-+(]?\d/gm;
+    const src = 'const A_B = 5;\n  const RATE: number = 0.5;\nconst NAME = "x";\nconst lower = 3;\nconst OBJ = { a: 1 };';
+    expect([...src.matchAll(re)].map((m) => m[1])).toEqual(['A_B', 'RATE']);
   });
 
   it('guarda: toda chave de config.ts está na rota ou na lista de ignoradas', () => {

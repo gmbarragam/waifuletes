@@ -17,6 +17,9 @@ export const KAKERA_CRYSTAL_BASE: Record<Rarity, number> = {
   LEGENDARY: 300,
 };
 
+// Bônus do cristal por chave que o dono tem no personagem sorteado (cristal = base da raridade + chaves × bônus)
+export const KAKERA_CRYSTAL_KEY_BONUS = 5;
+
 // Valores de divórcio comum (não-soulmate)
 export const RARITY_DIVORCE_VALUES: Record<Rarity, number> = {
   COMMON: 50,
@@ -86,12 +89,15 @@ export interface DivorceRefundOptions {
  * - Top 50% (mediana): ~1.75x
  * - Posições inferiores têm piso mínimo garantido em 1.0x (não desvaloriza abaixo do valor base).
  */
+export const RANK_MULTIPLIER_MAX = 7.0; // multiplicador da posição 1 da raridade
+export const RANK_MULTIPLIER_EXPONENT = 3; // curva cúbica: concentra o multiplicador no topo
+
 export function calculateRankMultiplier(position: number, total: number): number {
   if (!total || total <= 1 || !position || position < 1) return 1.0;
-  if (position === 1) return 7.0;
+  if (position === 1) return RANK_MULTIPLIER_MAX;
   if (position >= total) return 1.0;
   const ratio = Math.max(0, 1.0 - (position - 1) / total);
-  const mult = Math.max(1.0, 1.0 + 6.0 * Math.pow(ratio, 3));
+  const mult = Math.max(1.0, 1.0 + (RANK_MULTIPLIER_MAX - 1.0) * Math.pow(ratio, RANK_MULTIPLIER_EXPONENT));
   return Number(mult.toFixed(4));
 }
 

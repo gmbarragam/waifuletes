@@ -18,6 +18,12 @@ export const RARITY_DAYS: Record<Rarity, number> = {
 export const BASE_MONEY_SUPPLY = 4000000; // M0 = 4M Zinthos
 export const INFLATION_ALPHA = 0.25; // Reduzido de 0.5 para 0.25 (metade da taxa de inflação, ~49%)
 
+/**
+ * Fração devolvida (arredondada para baixo) a quem tinha cotas de investimento num personagem quando outro
+ * jogador casa com ele (sorteio, casamento ou compra por cotas). O resto é queimado.
+ */
+export const COMPETITOR_INVESTMENT_REFUND_RATE = 0.5;
+
 export const SCARCITY_BETA: Record<Rarity, number> = {
   COMMON: 1.0,
   UNCOMMON: 1.0,
@@ -652,7 +658,7 @@ export class MarketInvestmentService {
 
         const refundedCompetitors = [];
         for (const comp of competitors) {
-          const refundAmount = Math.floor(comp.totalZinthos * 0.5);
+          const refundAmount = Math.floor(comp.totalZinthos * COMPETITOR_INVESTMENT_REFUND_RATE);
 
           await tx.user.update({
             where: { id: comp.userId },
