@@ -98,19 +98,20 @@ export function calculateRankMultiplier(position: number, total: number): number
 /**
  * Pesos progressivos de custo para evolução de chaves via cotas de cônjuge (chaves 1 -> 2 até 9 -> 10).
  * Quanto mais chaves o jogador possui no personagem, mais caras ficam as cotas.
- * A soma total dos 9 níveis até Soulmate é 10.10x o valor de referência (garantindo que o custo total
- * de todas as 36 cotas para virar Soulmate seja sempre > 10x o valor líquido de divórcio da Soulmate, ~11.69x).
+ * A soma total dos 9 níveis até Soulmate é 1.20x o valor de referência (garantindo que o custo total
+ * de todas as 36 cotas para virar Soulmate seja ~1.20x o valor de divórcio da Soulmate,
+ * permitindo ao jogador recuperar ~79.2% do valor investido caso decida divorciar, sem possibilidade de lucro/infinito).
  */
 export const MARRIED_KEY_PROGRESSION_WEIGHTS = [
-  0.40, // Chave 1 -> 2 (60% OFF)
-  0.60, // Chave 2 -> 3 (40% OFF)
-  0.80, // Chave 3 -> 4 (20% OFF)
-  1.00, // Chave 4 -> 5 (100% da referência)
-  1.15, // Chave 5 -> 6 (+15%)
-  1.30, // Chave 6 -> 7 (+30%)
-  1.45, // Chave 7 -> 8 (+45%)
-  1.60, // Chave 8 -> 9 (+60%)
-  1.80, // Chave 9 -> 10 / Soulmate (+80%)
+  0.07, // Chave 1 -> 2 (93% OFF)
+  0.08, // Chave 2 -> 3 (92% OFF)
+  0.10, // Chave 3 -> 4 (90% OFF)
+  0.11, // Chave 4 -> 5 (89% OFF)
+  0.13, // Chave 5 -> 6 (87% OFF)
+  0.15, // Chave 6 -> 7 (85% OFF)
+  0.17, // Chave 7 -> 8 (83% OFF)
+  0.19, // Chave 8 -> 9 (81% OFF)
+  0.20, // Chave 9 -> 10 / Soulmate (80% OFF)
 ];
 
 export interface CharacterSharePricingParams {

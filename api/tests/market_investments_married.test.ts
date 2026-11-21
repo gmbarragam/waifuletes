@@ -4,7 +4,7 @@ import {
   RARITY_DAYS,
   MarketInvestmentService,
 } from '../src/services/MarketInvestmentService.js';
-import { calculateDivorceRefund, SOULMATE_DIVORCE_VALUES } from '../src/utils/rarityCalculator.js';
+import { calculateDivorceRefund, SOULMATE_DIVORCE_VALUES, MARRIED_KEY_PROGRESSION_WEIGHTS, calculateCharacterSharePricing } from '../src/utils/rarityCalculator.js';
 import { DomainError } from '../src/errors/DomainError.js';
 
 describe('💍 Reformulação de Cotas, Casamento e Soulmate', () => {
@@ -60,12 +60,12 @@ describe('💍 Reformulação de Cotas, Casamento e Soulmate', () => {
 
     const service = new MarketInvestmentService(mockPrisma, mockCharacterService);
 
-    // Cotação para o próprio cônjuge (keys = 2 -> peso 0.60, 40% OFF)
+    // Cotação para o próprio cônjuge (keys = 2 -> peso 0.08, 92% OFF)
     const quoteSpouse = await service.getCharacterQuote('makima', 'user-spouse');
     expect(quoteSpouse.character.isOwner).toBe(true);
     expect(quoteSpouse.character.isSoulmate).toBe(false);
-    expect(quoteSpouse.pricing.discountPercent).toBe(40);
-    expect(quoteSpouse.pricing.cotaPrice).toBe(Math.ceil(Math.round(quoteSpouse.pricing.baseCotaPrice * 4 * 0.60) / 4));
+    expect(quoteSpouse.pricing.discountPercent).toBe(92);
+    expect(quoteSpouse.pricing.cotaPrice).toBe(Math.ceil(Math.round(quoteSpouse.pricing.baseCotaPrice * 4 * 0.08) / 4));
 
     // Cotação para terceiro
     const quoteOther = await service.getCharacterQuote('makima', 'user-stranger');
@@ -176,5 +176,49 @@ describe('💍 Reformulação de Cotas, Casamento e Soulmate', () => {
         shares: 1,
       })
     ).rejects.toThrow('Apenas o cônjuge pode investir em personagens casados.');
+  });
+
+  it('deve garantir que a soma dos pesos de evolução (36 cotas / 9 chaves) seja 1.20x e que o divórcio nunca gere lucro', () => {
+    const totalWeights = MARRIED_KEY_PROGRESSION_WEIGHTS.reduce((acc, w) => acc + w, 0);
+    expect(Number(totalWeights.toFixed(2))).toBe(1.20);
+
+    // Valida para todas as raridades que o custo total investido supera o reembolso líquido de divórcio Soulmate
+    const rarities: ('COMMON' | 'UNCOMMON' | 'RARE' | 'EPIC' | 'LEGENDARY')[] = [
+      'COMMON',
+      'UNCOMMON',
+      'RARE',
+      'EPIC',
+      'LEGENDARY',
+    ];
+
+    for (const rarity of rarities) {
+      for (const rankMultiplier of [1.0, 3.5, 7.0]) {
+        const soulmateDivorce = calculateDivorceRefund(rarity, 10, {
+          isSoulmate: true,
+          rankMultiplier,
+        });
+
+        // Custo total investido ao comprar as 4 cotas em cada um dos 9 níveis
+        let totalCostInvested = 0;
+        for (let k = 1; k <= 9; k++) {
+          const stepPricing = calculateCharacterSharePricing({
+            baseRarity: rarity,
+            baseDynamicPrice: SOULMATE_DIVORCE_VALUES[rarity],
+            rankMultiplier,
+            isOwner: true,
+            currentKeys: k,
+          });
+          totalCostInvested += stepPricing.cotaPrice * 4;
+        }
+
+        // O custo total investido deve ser MAIOR que o reembolso líquido de divórcio (garantia anti-lucro)
+        expect(totalCostInvested).toBeGreaterThan(soulmateDivorce.netKakera);
+
+        // O retorno de divórcio recupera até 80% do valor investido
+        const recoveryRatio = soulmateDivorce.netKakera / totalCostInvested;
+        expect(recoveryRatio).toBeLessThan(0.80);
+        expect(recoveryRatio).toBeGreaterThan(0.70);
+      }
+    }
   });
 });
