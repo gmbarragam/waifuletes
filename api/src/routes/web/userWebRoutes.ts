@@ -1307,14 +1307,20 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
         properties: {
           token: { type: 'string', maxLength: 256 },
           gender: { type: 'string', enum: ['ALL', 'FEMALE', 'MALE'] },
+          excludeCharacterIds: {
+            type: 'array',
+            items: { type: 'string', maxLength: 64 },
+            maxItems: 50,
+          },
         },
       },
     },
     handler: async (request, reply) => {
       const { publicId } = request.params as { publicId: string };
-      const { token, gender } = request.body as {
+      const { token, gender, excludeCharacterIds } = request.body as {
         token: string;
         gender?: 'ALL' | 'FEMALE' | 'MALE';
+        excludeCharacterIds?: string[];
       };
 
       const session = publicId === 'token-session'
@@ -1371,6 +1377,7 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
               groupId: waifinderLockGroup,
               genderFilter,
               bonuses,
+              excludeCharacterIds,
             });
 
             if (!rollResult.success) {

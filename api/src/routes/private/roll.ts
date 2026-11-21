@@ -39,6 +39,12 @@ export const privateRollRoutes: FastifyPluginAsync = async (fastify) => {
           name: { type: 'string', maxLength: 128 },
           platform: { type: 'string', enum: ['WHATSAPP', 'TELEGRAM', 'DISCORD'], default: 'WHATSAPP' },
           gender: { type: 'string', enum: ['FEMALE', 'MALE', 'OTHER'] },
+          excludeCharacterIds: {
+            type: 'array',
+            items: { type: 'string', maxLength: 64 },
+            maxItems: 100,
+            description: 'IDs de personagens a serem excluídos do sorteio (evita repetições em multi-rolls)',
+          },
           bonuses: {
             type: 'object',
             additionalProperties: false,
@@ -96,6 +102,7 @@ export const privateRollRoutes: FastifyPluginAsync = async (fastify) => {
         name?: string;
         platform?: Platform;
         gender?: Gender;
+        excludeCharacterIds?: string[];
         bonuses?: RollBonuses;
         bonus?: RollBonuses;
       };
@@ -115,6 +122,7 @@ export const privateRollRoutes: FastifyPluginAsync = async (fastify) => {
         groupId: body.groupId,
         genderFilter: body.gender,
         bonuses: activeBonuses,
+        excludeCharacterIds: body.excludeCharacterIds,
       });
 
       if (!result.success) {

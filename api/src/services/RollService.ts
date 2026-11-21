@@ -18,6 +18,7 @@ export interface RollOptions {
   groupId: string;
   genderFilter?: Gender;
   bonuses?: RollBonuses;
+  excludeCharacterIds?: string[];
 }
 
 interface CachedPoolItem {
@@ -239,9 +240,18 @@ export class RollService {
       setAttrs({
         'waifu.roll.weekly_legendaries': weeklyLegCount,
         'waifu.roll.weekly_leg_multiplier': weeklyLegMultiplier,
+        'waifu.roll.excluded_count': options.excludeCharacterIds?.length ?? 0,
       }, rollSpan);
 
       const disabledIds = new Set(disabledRecords.map((d) => d.characterId));
+      const excludedIds = new Set<string>();
+      if (Array.isArray(options.excludeCharacterIds) && options.excludeCharacterIds.length > 0) {
+        for (const id of options.excludeCharacterIds) {
+          if (typeof id === 'string' && id.trim()) {
+            excludedIds.add(id.trim());
+          }
+        }
+      }
       const wishMap = new Map(wishlistRecords.map((w) => [w.characterId, w.isStarWish]));
       const claimedMap = new Map(claimedRecords.map((c) => [c.id, c.claimCount]));
       const investmentMap = new Map(investmentRecords.map((i) => [i.characterId, i.shares]));
@@ -261,6 +271,13 @@ export class RollService {
         }
         if (disabledIds.size > 0) {
           candidates = candidates.filter((c) => !disabledIds.has(c.id));
+        }
+        if (excludedIds.size > 0) {
+          const nonExcluded = candidates.filter((c) => !excludedIds.has(c.id));
+          // Só aplica exclusão se ainda restarem candidatos disponíveis
+          if (nonExcluded.length > 0) {
+            candidates = nonExcluded;
+          }
         }
 
         if (candidates.length === 0) {
