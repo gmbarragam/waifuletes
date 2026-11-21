@@ -748,6 +748,7 @@
     },
 
     _cancelPhotoAction() {
+      this._isSubmitting = false;
       document.getElementById('user-photo-action-box')?.classList.add('hidden');
       document.getElementById('cropper-container')?.classList.add('hidden');
       document.getElementById('crop-progress-container')?.classList.add('hidden');
@@ -781,8 +782,9 @@
         onSuccess = null,
       } = opts;
 
-      this._token = token || '';
-      this._publicId = publicId || 'token-session';
+      this._isSubmitting = false;
+      this._token = token || (typeof getCookie === 'function' ? getCookie('waifu_session') : '') || (window.localStorage ? (localStorage.getItem('waifu_session') || '') : '') || '';
+      this._publicId = publicId || (typeof getCookie === 'function' ? (getCookie('waifu_user_public_id') || getCookie('waifu_public_id') || '') : '') || (window.localStorage ? (localStorage.getItem('waifu_user_public_id') || '') : '') || 'token-session';
       this._onSuccess = typeof onSuccess === 'function' ? onSuccess : null;
 
       let char = character;
@@ -891,6 +893,7 @@
     },
 
     close() {
+      this._isSubmitting = false;
       if (this._countdownTimer) {
         clearInterval(this._countdownTimer);
         this._countdownTimer = null;
@@ -942,7 +945,11 @@
     },
 
     async submitPhotoCrop() {
-      if (this._isSubmitting || !this._activeCharacter) return;
+      if (this._isSubmitting) return;
+      if (!this._activeCharacter) {
+        global.Api?.showToast('Personagem não carregado.', '⚠️');
+        return;
+      }
 
       const fileInput = document.getElementById('suggest-file-input');
       const file = fileInput?.files?.[0];
@@ -953,125 +960,89 @@
       const progressBar = document.getElementById('crop-progress-bar');
       const progressText = document.getElementById('crop-progress-text');
 
-      const sendPhoto = async (imagePayload) => {
-        const formData = new FormData();
-        formData.append('token', this._token);
-        formData.append('type', 'IMAGE');
-        formData.append('characterId', this._activeCharacter.id);
-        formData.append('action', this._photoAction);
-        if (this._targetPhoto) {
-          formData.append('targetPhoto', this._targetPhoto);
-        }
-        formData.append('reason', reason);
-        formData.append('image', imagePayload, 'user_photo.jpg');
-
-        if (progressContainer) progressContainer.classList.remove('hidden');
-        if (progressBar) progressBar.style.width = '0%';
-        if (progressText) progressText.textContent = 'Aguarde... 0%';
-
-        if (btnCrop) {
-          btnCrop.disabled = true;
-          btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
-        }
-
-        const onProgress = (percent) => {
-          if (progressBar) progressBar.style.width = `${percent}%`;
-          if (progressText) {
-            if (percent < 100) {
-              progressText.textContent = `Aguarde... ${percent}%`;
-            } else {
-              progressText.textContent = 'Processando no servidor... 100%';
+      // Tenta obter o recorte do canvas de forma síncrona
+      let imageBlob = null;
+      if (this._cropper) {
+        try {
+          const canvas = this._cropper.getCroppedCanvas({ width: 450, height: 700 });
+          if (canvas) {
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            if (dataUrl && dataUrl.startsWith('data:image/')) {
+              imageBlob = global.Api?.dataURItoBlob ? global.Api.dataURItoBlob(dataUrl) : null;
             }
           }
-        };
-
-        try {
-          const res = await (global.Api?.uploadWithProgress
-            ? global.Api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
-            : global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData));
-
-          if (!res?.success) {
-            global.Api?.showToast(res?.error?.message || 'Falha ao enviar foto.', '❌');
-            return;
-          }
-
-          const msg = this._photoAction === 'REPLACE'
-            ? 'Sugestão de substituição de foto enviada para a moderação!'
-            : 'Sugestão de nova foto enviada para a moderação!';
-          this.close();
-          global.Api?.showToast(msg, '🖼️');
-          if (this._onSuccess) this._onSuccess(res);
-        } catch (err) {
-          global.Api?.showToast(err?.message || 'Erro de comunicação ao enviar imagem.', '❌');
-        } finally {
-          if (progressContainer) progressContainer.classList.add('hidden');
-          if (btnCrop) {
-            btnCrop.disabled = false;
-            btnCrop.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto';
-          }
-          this._isSubmitting = false;
-        }
-      };
-
-      if (this._cropper) {
-        let canvas = null;
-        try {
-          canvas = this._cropper.getCroppedCanvas({ width: 450, height: 700 });
-        } catch (_) {}
-
-        if (canvas) {
-          if (btnCrop) {
-            btnCrop.disabled = true;
-            btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Otimizando foto...';
-          }
-          this._isSubmitting = true;
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                sendPhoto(blob);
-              } else if (file) {
-                (async () => {
-                  try {
-                    const compressed = await (global.Api?.compressImageFile ? global.Api.compressImageFile(file, 900, 1400, 0.85) : file);
-                    sendPhoto(compressed);
-                  } catch (_) {
-                    sendPhoto(file);
-                  }
-                })();
-              } else {
-                global.Api?.showToast('Falha ao processar recorte de imagem.', '❌');
-                if (btnCrop) {
-                  btnCrop.disabled = false;
-                  btnCrop.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto';
-                }
-                this._isSubmitting = false;
-              }
-            },
-            'image/jpeg',
-            0.85
-          );
-          return;
+        } catch (e) {
+          console.warn('Falha ao extrair canvas do Cropper:', e);
         }
       }
 
-      if (file) {
-        if (btnCrop) {
-          btnCrop.disabled = true;
-          btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Otimizando foto...';
-        }
-        this._isSubmitting = true;
-        (async () => {
-          try {
-            const compressed = await (global.Api?.compressImageFile ? global.Api.compressImageFile(file, 900, 1400, 0.85) : file);
-            sendPhoto(compressed);
-          } catch (_) {
-            sendPhoto(file);
-          }
-        })();
+      // Se o cropper falhou ou não gerou blob, usa o arquivo original
+      if (!imageBlob && file) {
+        imageBlob = file;
+      }
+
+      if (!imageBlob) {
+        global.Api?.showToast('Por favor, selecione uma foto antes de enviar.', '⚠️');
         return;
       }
 
-      global.Api?.showToast('Por favor, selecione uma foto antes de enviar.', '⚠️');
+      this._isSubmitting = true;
+      if (btnCrop) {
+        btnCrop.disabled = true;
+        btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+      }
+      if (progressContainer) progressContainer.classList.remove('hidden');
+      if (progressBar) progressBar.style.width = '0%';
+      if (progressText) progressText.textContent = 'Aguarde... 0%';
+
+      const formData = new FormData();
+      formData.append('token', this._token);
+      formData.append('type', 'IMAGE');
+      formData.append('characterId', this._activeCharacter.id);
+      formData.append('action', this._photoAction);
+      if (this._targetPhoto) {
+        formData.append('targetPhoto', this._targetPhoto);
+      }
+      formData.append('reason', reason);
+      formData.append('image', imageBlob, 'user_photo.jpg');
+
+      const onProgress = (percent) => {
+        if (progressBar) progressBar.style.width = `${percent}%`;
+        if (progressText) {
+          if (percent < 100) {
+            progressText.textContent = `Aguarde... ${percent}%`;
+          } else {
+            progressText.textContent = 'Processando no servidor... 100%';
+          }
+        }
+      };
+
+      try {
+        const res = await (global.Api?.uploadWithProgress
+          ? global.Api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
+          : global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData));
+
+        if (!res?.success) {
+          global.Api?.showToast(res?.error?.message || 'Falha ao enviar foto.', '❌');
+          return;
+        }
+
+        const msg = this._photoAction === 'REPLACE'
+          ? 'Sugestão de substituição de foto enviada para a moderação!'
+          : 'Sugestão de nova foto enviada para a moderação!';
+        this.close();
+        global.Api?.showToast(msg, '🖼️');
+        if (this._onSuccess) this._onSuccess(res);
+      } catch (err) {
+        global.Api?.showToast(err?.message || 'Erro de comunicação ao enviar imagem.', '❌');
+      } finally {
+        if (progressContainer) progressContainer.classList.add('hidden');
+        if (btnCrop) {
+          btnCrop.disabled = false;
+          btnCrop.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto';
+        }
+        this._isSubmitting = false;
+      }
     },
 
     async submitEditInfo() {
@@ -1144,7 +1115,6 @@
 
         let compressedPhoto = photoFile;
         try {
-          if (progressText) progressText.textContent = 'Otimizando foto...';
           compressedPhoto = await (global.Api?.compressImageFile ? global.Api.compressImageFile(photoFile, 900, 1400, 0.85) : photoFile);
         } catch (_) {}
 

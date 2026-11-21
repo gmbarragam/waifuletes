@@ -145,62 +145,102 @@ const Api = {
   },
 
   /**
+   * Converte uma string base64 / dataURI em Blob binário nativo de forma síncrona e instantânea.
+   * Não depende de callbacks assíncronos ou construtor File (funciona em 100% dos navegadores móveis e desktop).
+   */
+  dataURItoBlob(dataURI) {
+    if (!dataURI || typeof dataURI !== 'string' || !dataURI.includes(',')) return null;
+    try {
+      const parts = dataURI.split(',');
+      const byteString = atob(parts[1]);
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mimeString = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      return new Blob([ab], { type: mimeString });
+    } catch (e) {
+      console.warn('Api.dataURItoBlob error:', e);
+      return null;
+    }
+  },
+
+  /**
    * Compacta um arquivo de imagem diretamente no navegador via Canvas.
    * Reduz fotos pesadas da galeria (10MB+) para arquivos JPEG leves (~50KB-120KB) em milissegundos.
+   * Possui timeout de segurança de 1s para nunca travar a interface do usuário.
    */
   compressImageFile(file, maxWidth = 900, maxHeight = 1400, quality = 0.85) {
     return new Promise((resolve) => {
-      if (!file || !(file instanceof Blob) || !file.type || !file.type.startsWith('image/')) {
-        return resolve(file);
-      }
-      // Se for GIF animado, preserva intacto para manter a animação
-      if (file.type === 'image/gif') {
+      if (!file || !(file instanceof Blob) || !file.type || !file.type.startsWith('image/') || file.type === 'image/gif') {
         return resolve(file);
       }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          let { width, height } = img;
-          if (width > maxWidth || height > maxHeight) {
-            const ratio = Math.min(maxWidth / width, maxHeight / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
-          }
+      // Se já for leve (<= 350KB), não precisa gastar CPU no cliente
+      if (file.size <= 350 * 1024) {
+        return resolve(file);
+      }
 
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, width);
-          canvas.height = Math.max(1, height);
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return resolve(file);
+      // Timeout de emergência: se passar de 1 segundo, retorna o arquivo original sem travar a interface
+      const timer = setTimeout(() => resolve(file), 1000);
 
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, width, height);
+      try {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const img = new Image();
+            img.onload = () => {
+              clearTimeout(timer);
+              try {
+                let { width, height } = img;
+                if (width > maxWidth || height > maxHeight) {
+                  const ratio = Math.min(maxWidth / width, maxHeight / height);
+                  width = Math.round(width * ratio);
+                  height = Math.round(height * ratio);
+                }
 
-          canvas.toBlob(
-            (blob) => {
-              if (blob && (blob.size < file.size || file.size > 200 * 1024)) {
-                const baseName = (file.name || 'image').replace(/\.[^/.]+$/, '');
-                const compressedFile = new File([blob], `${baseName}.jpg`, {
-                  type: 'image/jpeg',
-                  lastModified: Date.now(),
-                });
-                resolve(compressedFile);
-              } else {
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, width);
+                canvas.height = Math.max(1, height);
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return resolve(file);
+
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(img, 0, 0, width, height);
+
+                const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                const blob = Api.dataURItoBlob(dataUrl);
+                if (blob && (blob.size < file.size || file.size > 200 * 1024)) {
+                  resolve(blob);
+                } else {
+                  resolve(file);
+                }
+              } catch (_) {
                 resolve(file);
               }
-            },
-            'image/jpeg',
-            quality
-          );
+            };
+            img.onerror = () => {
+              clearTimeout(timer);
+              resolve(file);
+            };
+            img.src = e.target.result;
+          } catch (_) {
+            clearTimeout(timer);
+            resolve(file);
+          }
         };
-        img.onerror = () => resolve(file);
-        img.src = e.target.result;
-      };
-      reader.onerror = () => resolve(file);
-      reader.readAsDataURL(file);
+        reader.onerror = () => {
+          clearTimeout(timer);
+          resolve(file);
+        };
+        reader.readAsDataURL(file);
+      } catch (_) {
+        clearTimeout(timer);
+        resolve(file);
+      }
     });
   },
 

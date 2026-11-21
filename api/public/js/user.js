@@ -668,7 +668,6 @@ function setupEventListeners() {
 
       let fileToSend = photoFile;
       if (photoFile) {
-        if (progressText) progressText.textContent = 'Otimizando foto...';
         try {
           fileToSend = await Api.compressImageFile(photoFile, 900, 1400, 0.85);
         } catch (_) {
