@@ -61,17 +61,19 @@ const CharacterPage = {
     this.userToken = sp.get('token') || getCookie('waifu_session') || localStorage.getItem('waifu_session');
     this.userPublicId = sp.get('publicId') || getCookie('waifu_user_public_id') || getCookie('waifu_public_id') || localStorage.getItem('waifu_user_public_id');
 
-    // 3. Tenta validar sessão do usuário se houver token e publicId
-    if (this.userPublicId && this.userToken) {
+    // 3. Tenta validar sessão do usuário se houver token (com ou sem publicId)
+    if (this.userToken) {
       try {
-        const res = await Api.get(`/api/web/user/${encodeURIComponent(this.userPublicId)}?token=${encodeURIComponent(this.userToken)}`);
+        const lookupPublicId = this.userPublicId || 'token-session';
+        const res = await Api.get(`/api/web/user/${encodeURIComponent(lookupPublicId)}?token=${encodeURIComponent(this.userToken)}`);
         if (res?.success && res.data?.isAdmin) {
           this.userSessionData = res.data;
+          this.userPublicId = res.data.publicId || this.userPublicId;
           this.isAuthenticated = true;
 
           // Atualiza botão de Meu Harém no rodapé
           const btnHarem = document.getElementById('btn-harem-nav');
-          if (btnHarem) {
+          if (btnHarem && this.userPublicId) {
             btnHarem.href = `/user/${encodeURIComponent(this.userPublicId)}`;
             btnHarem.classList.remove('hidden');
           }
@@ -261,10 +263,14 @@ const CharacterPage = {
 
     const isMythic = Boolean(this.charData?.isMythic || this.charData?.rarity === 'MYTHIC' || this.charData?.baseRarity === 'MYTHIC');
 
-    // Botão de Wishlist (oculto para Míticos)
+    // Botão de Wishlist e Sugestão (ocultos para Míticos)
     const btnWishEl = document.getElementById('btn-char-wish');
     if (btnWishEl) {
       btnWishEl.style.display = isMythic ? 'none' : '';
+    }
+    const btnSuggestEl = document.getElementById('btn-char-suggest');
+    if (btnSuggestEl) {
+      btnSuggestEl.style.display = isMythic ? 'none' : '';
     }
 
     if (!this.isAuthenticated) {
@@ -477,22 +483,25 @@ const CharacterPage = {
     }
   },
 
-  copyShareLink() {
-    const shortId = this.charData?.numericId || this.charId;
-    const url = window.location.origin + `/c/${encodeURIComponent(shortId)}`;
-    Api.copyToClipboard(url, 'Link curto copiado!').then((copied) => {
-      if (!copied) {
-        Api.showPrompt({
-          icon: '🔗',
-          title: 'Compartilhar Personagem',
-          message: 'Copie o link abaixo para compartilhar este personagem:',
-          defaultValue: url,
-          readOnly: true,
-          selectOnOpen: true,
-          hideCancel: true,
-          confirmText: 'Fechar'
-        });
-      }
+  openSuggestModal() {
+    if (!this.isAuthenticated || !this.userToken) {
+      Api.showToast('Conecte sua conta enviando !mu-adm para a Ravena para sugerir alterações!', '🔒');
+      return;
+    }
+    if (!this.charData || this.charData.isMythic) {
+      return;
+    }
+    if (!window.SuggestionModal) {
+      Api.showToast('Componente de sugestões não carregado.', '❌');
+      return;
+    }
+    window.SuggestionModal.open({
+      character: this.charData,
+      token: this.userToken,
+      publicId: this.userPublicId || 'token-session',
+      onSuccess: () => {
+        this.loadCharacterData();
+      },
     });
   },
 

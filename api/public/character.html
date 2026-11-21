@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Card de Personagem • Waifuletes ✨</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/css/retro-theme.css?v=20261112-retro-modals">
+  <link rel="stylesheet" href="/css/retro-theme.css?v=20261121-waifinder-layout3">
+  <link rel="stylesheet" href="/vendor/cropper.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     body {
@@ -237,8 +238,8 @@
         <a id="btn-harem-nav" href="#" class="btn-retro btn-sm btn-gold hidden">
           <i class="fas fa-heart"></i> Meu Harém
         </a>
-        <button type="button" class="btn-retro btn-sm" onclick="CharacterPage.copyShareLink()">
-          <i class="fas fa-share-alt"></i> Compartilhar Link
+        <button type="button" class="btn-retro btn-sm btn-gold" id="btn-char-suggest" onclick="CharacterPage.openSuggestModal()" title="Sugerir alteração de dados ou fotos">
+          <i class="fas fa-lightbulb"></i> Sugerir Alteração
         </button>
         <button type="button" class="btn-retro btn-sm btn-danger" id="btn-char-report" onclick="CharacterPage.openReportModal()" style="font-weight: 800;" title="Denunciar este personagem para a moderação">
           <i class="fas fa-flag"></i> Denunciar
@@ -275,7 +276,9 @@
   <!-- Toast Retrô Notificação -->
   <div id="retro-toast" class="retro-toast hidden"></div>
 
-  <script src="/js/api.js?v=20261113-modal-focus"></script>
-  <script src="/js/character.js?v=20261112-retro-modals"></script>
+  <script src="/vendor/cropper.min.js"></script>
+  <script src="/js/api.js?v=20261121-waifinder-layout3"></script>
+  <script src="/js/suggestion-modal.js?v=20261121-waifinder-layout3"></script>
+  <script src="/js/character.js?v=20261121-waifinder-layout3"></script>
 </body>
 </html>

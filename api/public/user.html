@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Harém do Usuário • Waifuletes ✨</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/css/retro-theme.css?v=20261112-retro-modals">
+  <link rel="stylesheet" href="/css/retro-theme.css?v=20261121-waifinder-layout3">
   <link rel="stylesheet" href="/vendor/cropper.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
@@ -776,194 +776,7 @@
     </div>
   </div>
 
-  <!-- Modal de Sugestões de Personagem Existente (Dados Gerais e Fotos) -->
-  <div class="modal-overlay hidden" id="modal-suggest">
-    <div class="modal-box" style="max-width: min(720px, 90vw); max-height: 85vh; overflow-y: auto;">
-      <div class="modal-header">
-        <span class="modal-title">💡 Sugerir Alteração no Personagem</span>
-        <button class="modal-close" onclick="closeModal('modal-suggest')">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; background: var(--bg-card-subtle); padding: 10px; border: var(--border-retro); border-radius: 4px;">
-          <div>
-            <h4 id="suggest-char-name" style="font-weight: 800; font-size: 16px; margin: 0;">Personagem</h4>
-            <span id="suggest-char-series-badge" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Série</span>
-          </div>
-          <span id="suggest-current-rarity" class="badge-rarity" style="position: static;">⚪ Comum</span>
-        </div>
-
-        <div class="retro-tabs" style="margin-bottom: 16px;">
-          <button class="retro-tab active" data-subtab="subtab-edit-info">📝 Dados</button>
-          <button class="retro-tab" data-subtab="subtab-photos">📸 Fotos</button>
-        </div>
-
-        <!-- Subaba Dados Gerais do Personagem -->
-        <div class="subtab-content" id="subtab-edit-info">
-          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Sugerir alterações de sexo, série, descrição, raridade e tags.</p>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="retro-label">Nome Sugerido:</label>
-              <input type="text" id="suggest-edit-name" class="retro-input" placeholder="Nome do personagem">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="retro-label">Série / Anime Sugerido:</label>
-              <input type="text" id="suggest-edit-series" class="retro-input" placeholder="Obra / Franquia de origem">
-            </div>
-          </div>
-
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="retro-label">Gênero / Sexo:</label>
-              <select id="suggest-edit-gender" class="retro-select">
-                <option value="FEMALE">♀ Feminino</option>
-                <option value="MALE">♂ Masculino</option>
-                <option value="OTHER">⚧ Outro</option>
-              </select>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="retro-label">Raridade Sugerida:</label>
-              <select id="suggest-edit-rarity" class="retro-select">
-                <option value="COMMON">⚪ Comum</option>
-                <option value="UNCOMMON">🟢 Incomum</option>
-                <option value="RARE">🔵 Raro</option>
-                <option value="EPIC">🟣 Épico</option>
-                <option value="LEGENDARY">⭐ Lendário</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Alerta e Upload de Foto para Versão Lendária de Personagem Casado -->
-          <div id="suggest-legendary-married-box" class="legendary-married-alert hidden">
-            <div style="font-weight: 800; display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
-              <span>⚠️</span> <span>Regra Especial: Personagem Já Casado</span>
-            </div>
-            <p style="margin: 0 0 10px 0; line-height: 1.4;">
-              Este personagem <b>já foi casado</b>. A raridade máxima permitida para o personagem existente é <b>ÉPICO</b>. Você deveria ter feito a sugestão antes de se casar com o personagem, esta ação é mal vista pela administração, pois parece abuso do sistema para tentar fazer upgrade nos seus personagens.<br>
-              Para sugerir a mudança para <b>LENDÁRIO</b>, será criado um <b>NOVO personagem</b> no catálogo na versão lendária.<br>
-              📸 <b>É obrigatório fornecer uma nova foto neste caso!</b>
-            </p>
-            <div class="form-group" style="margin-bottom: 8px;">
-              <label class="retro-label" style="color: inherit; font-weight: 800;">Nova Foto para a Versão Lendária: *</label>
-              <input type="file" id="suggest-legendary-photo-input" class="retro-input" accept="image/*">
-              <div id="suggest-legendary-preview-container" class="hidden" style="margin-top: 8px; text-align: center;">
-                <img id="suggest-legendary-preview-img" src="" style="max-height: 160px; border: var(--border-retro); border-radius: 6px;" alt="Prévia da Foto">
-              </div>
-            </div>
-
-            <!-- Countdown de 30s posicionado logo abaixo do picker de foto -->
-            <div id="suggest-legendary-countdown" class="hidden" style="margin-bottom: 10px; padding: 10px 14px; background: #fef08a; border: 2px solid #eab308; border-radius: 6px; font-weight: 800; font-size: 13px; color: #854d0e; text-align: center;">
-              ⏳ AGUARDE! Aproveite este tempo para ler o texto acima. (<span id="suggest-legendary-countdown-seconds">30</span>s)
-            </div>
-
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="retro-label" style="color: inherit; font-weight: 800;">
-                Confirmação obrigatória: Digite a frase <span style="color: #b91c1c;">"Personagem casado, criar versão lendária"</span>: *
-              </label>
-              <input type="text" id="suggest-legendary-phrase-input" class="retro-input" placeholder="Personagem casado, criar versão lendária" autocomplete="off">
-              <small id="suggest-legendary-phrase-status" style="display: block; margin-top: 4px; font-size: 11px; font-weight: 700; color: #b91c1c;">
-                Digite a frase acima para iniciar a contagem de 30 segundos e liberar o envio.
-              </small>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="retro-label">Tags do Personagem (Adicionar e Remover):</label>
-            <div id="suggest-tags-chips-container" class="tag-manager-container"></div>
-            <div style="display: flex; gap: 8px; margin-top: 6px;">
-              <input type="text" id="suggest-new-tag-input" class="retro-input" placeholder="Nova tag..." style="flex: 1;">
-              <button type="button" class="btn-retro btn-sm btn-gold" id="btn-add-suggest-tag" style="white-space: nowrap;">
-                <i class="fas fa-plus"></i> Adicionar
-              </button>
-            </div>
-            <input type="hidden" id="suggest-edit-tags">
-          </div>
-
-          <div class="form-group">
-            <label class="retro-label">Descrição / Biografia Sugerida:</label>
-            <textarea id="suggest-edit-description" class="retro-textarea" rows="3" placeholder="Informações biográficas da waifu/personagem..."></textarea>
-          </div>
-
-          <div class="form-group">
-            <label class="retro-label">Justificativa da Mudança (obrigatório, mín. 5 caracteres):</label>
-            <textarea id="suggest-edit-reason" class="retro-textarea" rows="2" placeholder="Por que essas alterações devem ser aplicadas?"></textarea>
-          </div>
-
-          <button class="btn-retro btn-sm btn-gold" id="btn-submit-edit-info" onclick="submitEditInfoSuggestion()" style="width: 100%;" disabled title="Preencha os dados necessários para liberar o envio">
-            <i class="fas fa-paper-plane"></i> Enviar Sugestão de Dados
-          </button>
-        </div>
-
-        <!-- Subaba Fotos -->
-        <div class="subtab-content hidden" id="subtab-photos">
-          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Ver, adicionar, excluir e substituir fotos da galeria.</p>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <span style="font-weight: 800; font-size: 13px;">
-              🖼️ Fotos Atuais no Jogo (<span id="suggest-photos-count">0</span>):
-            </span>
-            <button type="button" class="btn-retro btn-sm btn-gold" onclick="triggerUserAddPhoto()">
-              <i class="fas fa-plus"></i> Sugerir Nova Foto
-            </button>
-          </div>
-
-          <!-- Galeria de Fotos Atuais -->
-          <div id="suggest-photos-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px;">
-            <!-- Miniaturas dinâmicas -->
-          </div>
-
-          <!-- Ação Selecionada para Foto (Adicionar, Excluir ou Substituir) -->
-          <div id="user-photo-action-box" class="hidden" style="background: var(--bg-card-subtle); border: var(--border-retro); border-radius: 6px; padding: 12px; margin-top: 10px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span id="user-photo-action-title" style="font-weight: 800; font-size: 13px;">Ação na Foto:</span>
-              <button type="button" class="btn-retro btn-sm" onclick="cancelUserPhotoAction()" style="padding: 2px 8px; font-size: 11px;">Cancelar</button>
-            </div>
-
-            <!-- Formulário de Exclusão de Foto -->
-            <div id="user-photo-delete-form" class="hidden">
-              <p style="font-size: 12px; color: #dc2626; font-weight: 700; margin-bottom: 8px;">
-                ⚠️ Você está sugerindo a exclusão desta foto errada/inadequada.
-              </p>
-              <div class="form-group">
-                <label class="retro-label">Motivo da Exclusão (mín. 5 caracteres):</label>
-                <input type="text" id="user-photo-delete-reason" class="retro-input" placeholder="Ex: Foto de outro personagem, baixa qualidade, etc.">
-              </div>
-              <button type="button" class="btn-retro btn-sm btn-danger" onclick="submitUserDeletePhotoSuggestion()" style="width: 100%;">
-                <i class="fas fa-trash"></i> Confirmar Sugestão de Exclusão
-              </button>
-            </div>
-
-            <!-- Formulário de Upload / Recorte para Nova Foto ou Substituição -->
-            <div id="user-photo-upload-form" class="hidden">
-              <div class="form-group" style="margin-bottom: 8px;">
-                <label class="retro-label">Selecione o arquivo da imagem:</label>
-                <input type="file" id="suggest-file-input" class="retro-input" accept="image/*">
-              </div>
-              
-              <div id="cropper-container" class="hidden">
-                <div class="cropper-img-box">
-                  <img id="cropper-img" src="" alt="Recorte de foto">
-                </div>
-                <div class="cropper-preview-container">
-                  <div>
-                    <span class="retro-label" style="display: block; margin-bottom: 4px;">Pré-visualização (Card):</span>
-                    <div class="crop-preview-box" id="crop-preview"></div>
-                  </div>
-                  <div style="flex: 1;">
-                    <div class="form-group" style="margin-bottom: 0;">
-                      <label class="retro-label">Motivo / Justificativa:</label>
-                      <input type="text" id="suggest-photo-reason" class="retro-input" placeholder="Ex: Foto oficial em alta resolução">
-                    </div>
-                  </div>
-                </div>
-                <button class="btn-retro btn-sm btn-gold" id="btn-submit-crop" onclick="submitUserPhotoCropSuggestion()" style="width: 100%; margin-top: 14px;">
-                  <i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- Modal de Sugestões de Personagem Existente (#modal-suggest) é injetado dinamicamente por /js/suggestion-modal.js -->
 
   <!-- Modal de Sugestão de NOVO PERSONAGEM -->
   <div class="modal-overlay hidden" id="modal-suggest-character">
@@ -1982,7 +1795,8 @@
   <div id="retro-toast" class="retro-toast hidden"></div>
 
   <script src="/vendor/cropper.min.js"></script>
-  <script src="/js/api.js?v=20261113-modal-focus"></script>
-  <script src="/js/user.js?v=20261119-ux-improvements"></script>
+  <script src="/js/api.js?v=20261121-waifinder-layout3"></script>
+  <script src="/js/suggestion-modal.js?v=20261121-waifinder-layout3"></script>
+  <script src="/js/user.js?v=20261121-waifinder-layout3"></script>
 </body>
 </html>

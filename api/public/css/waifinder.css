@@ -19,8 +19,8 @@
 
 .waifinder-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 6px;
   margin-bottom: 8px;
   padding: 6px 10px;
   background: var(--bg-card);
@@ -28,6 +28,27 @@
   border-radius: var(--radius-retro);
   box-shadow: var(--shadow-retro-sm);
   flex-shrink: 0;
+}
+
+.waifinder-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.waifinder-user-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.35);
+  width: 100%;
+}
+
+.waifinder-user-bar.hidden {
+  display: none !important;
 }
 
 .waifinder-brand {
@@ -70,7 +91,53 @@
 .waifinder-user-badge {
   background: #fef08a;
   color: #854d0e;
+  border: var(--border-retro);
   border-color: #ca8a04;
+  border-radius: var(--radius-retro);
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  justify-content: space-between;
+  box-sizing: border-box;
+}
+
+.waifinder-rolls-indicator {
+  font-weight: 900;
+  font-size: 12px;
+}
+
+/* Botão Toggle Olhando / Rollando */
+.waifinder-mode-btn {
+  font-weight: 800;
+  transition: all 0.15s ease;
+}
+
+.waifinder-mode-btn.mode-olhando {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #16a34a;
+}
+body.dark-mode .waifinder-mode-btn.mode-olhando {
+  background: #0d2e18;
+  color: #4ade80;
+  border-color: #22c55e;
+}
+
+.waifinder-mode-btn.mode-rollando {
+  background: #fce7f3;
+  color: #be185d;
+  border-color: #ec4899;
+  box-shadow: 0 0 8px rgba(236, 72, 153, 0.35);
+}
+body.dark-mode .waifinder-mode-btn.mode-rollando {
+  background: #4a0e2e;
+  color: #f9a8d4;
+  border-color: #ec4899;
+  box-shadow: 0 0 10px rgba(236, 72, 153, 0.5);
 }
 
 .waifinder-header-btn:active {
@@ -105,13 +172,35 @@ body.dark-mode .waifinder-user-badge {
   border-color: #9333ea;
 }
 
+/* Palco do Deck + Camada Flutuante de Stamps (fixa na tela, sem girar com o card) */
+.waifinder-deck-stage {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.waifinder-floating-stamp-layer {
+  position: absolute;
+  top: 16px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
 /* Área da Pilha de Cards */
 .waifinder-deck-area {
   position: relative;
   flex: 1;
   width: 100%;
   min-height: 0;
-  margin-bottom: 10px;
   perspective: 1000px;
 }
 
@@ -163,13 +252,15 @@ body.dark-mode .waifinder-user-badge {
 .waifinder-card.card-layer-1 {
   z-index: 8;
   transform: translateY(10px) scale(0.96) !important;
-  opacity: 0.92;
+  opacity: 1;
+  filter: brightness(0.94);
   pointer-events: none;
 }
 .waifinder-card.card-layer-2 {
   z-index: 6;
   transform: translateY(20px) scale(0.92) !important;
-  opacity: 0.8;
+  opacity: 1;
+  filter: brightness(0.88);
   pointer-events: none;
 }
 
@@ -189,6 +280,9 @@ body.dark-mode .waifinder-user-badge {
   object-fit: cover;
   object-position: top center;
   display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
 }
 
 .waifinder-card-gradient {
@@ -208,6 +302,35 @@ body.dark-mode .waifinder-user-badge {
   justify-content: space-between;
   align-items: center;
   pointer-events: none;
+  z-index: 15;
+}
+
+.btn-card-top-like {
+  pointer-events: auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(15, 10, 26, 0.72);
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  color: #f43f5e;
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  transition: transform 0.14s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.btn-card-top-like:hover {
+  transform: scale(1.08);
+  background: rgba(15, 10, 26, 0.9);
+}
+
+.btn-card-top-like.liked {
+  background: #e11d48;
+  color: #ffffff;
+  border-color: #fda4af;
 }
 
 .waifinder-rarity-badge {
@@ -232,46 +355,56 @@ body.dark-mode .waifinder-user-badge {
   color: #fde047;
 }
 
-/* Selos Dinâmicos de Swipe (LIKE e NOPE) */
+/* Selos Dinâmicos de Swipe fixos no topo central */
 .waifinder-stamp {
   position: absolute;
-  top: 40px;
-  padding: 6px 14px;
-  font-size: 26px;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  padding: 6px 18px;
+  font-size: 24px;
   font-weight: 900;
-  border-radius: 6px;
+  border-radius: 8px;
   letter-spacing: 2px;
   opacity: 0;
   pointer-events: none;
-  z-index: 25;
+  z-index: 45;
   text-transform: uppercase;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
-  transition: opacity 0.05s linear;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55);
+  transition: opacity 0.05s linear, transform 0.08s ease-out;
+  white-space: nowrap;
 }
 
 .waifinder-stamp.stamp-like {
-  right: 20px;
   color: #22c55e;
   border: 4px solid #22c55e;
-  transform: rotate(14deg);
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(10, 18, 12, 0.85);
+}
+
+.waifinder-stamp.stamp-like.is-marry {
+  color: #f472b6;
+  border-color: #ec4899;
+  background: rgba(45, 10, 32, 0.9);
+  text-shadow: 0 0 10px rgba(236, 72, 153, 0.6);
 }
 
 .waifinder-stamp.stamp-nope {
-  left: 20px;
   color: #ef4444;
   border: 4px solid #ef4444;
-  transform: rotate(-14deg);
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(24, 10, 12, 0.85);
+}
+
+.waifinder-stamp.stamp-nope.is-next {
+  color: #ffffff;
+  border-color: #ffffff;
+  background: rgba(15, 23, 42, 0.88);
 }
 
 .waifinder-stamp.stamp-wishlist {
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 120px;
   color: #eab308;
   border: 4px solid #eab308;
-  background: rgba(0, 0, 0, 0.85);
+  background: rgba(0, 0, 0, 0.88);
   font-size: 20px;
 }
 
@@ -311,11 +444,16 @@ body.dark-mode .waifinder-user-badge {
 .waifinder-char-stats {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
   margin-bottom: 6px;
+}
+
+.waifinder-char-stats > span {
+  white-space: nowrap;
 }
 
 .waifinder-char-desc {
@@ -357,23 +495,70 @@ body.dark-mode .waifinder-user-badge {
   justify-content: center;
 }
 
-/* Botões principais aumentados em ~50% */
+/* Botões principais do rodapé do card */
 .btn-waifinder-sub-action,
 .btn-waifinder-change-rarity {
+  box-sizing: border-box;
   background: rgba(255, 255, 255, 0.08);
   border: 1.5px dashed var(--border-color, #4a3e64);
   color: var(--text-main, #f8fafc);
-  padding: 7px 15px;
+  padding: 6px 11px;
   border-radius: 9999px;
-  font-size: 13.5px;
+  font-size: 12px;
   font-weight: 700;
+  line-height: 1.2;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   transition: all 0.18s ease;
   user-select: none;
+  text-decoration: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+
+.btn-waifinder-profile:hover {
+  background: rgba(59, 130, 246, 0.16);
+  border: 1.5px solid #3b82f6;
+  color: #60a5fa;
+  transform: translateY(-1px);
+}
+
+.waifinder-roll-status-banner {
+  font-size: 11.5px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 5px;
+  margin-bottom: 6px;
+  border: 1.5px solid;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.waifinder-roll-status-banner.is-married {
+  background: rgba(100, 116, 139, 0.16);
+  border-color: #64748b;
+  color: var(--text-muted);
+}
+
+.waifinder-roll-status-banner.is-owner {
+  background: rgba(234, 179, 8, 0.16);
+  border-color: #eab308;
+  color: #ca8a04;
+}
+
+.waifinder-roll-status-banner.is-mythic {
+  background: rgba(168, 85, 247, 0.22);
+  border-color: #a855f7;
+  color: #d8b4fe;
+}
+
+.waifinder-roll-status-banner.is-instant {
+  background: rgba(236, 72, 153, 0.2);
+  border-color: #ec4899;
+  color: #f472b6;
 }
 
 .btn-waifinder-sub-action i,
@@ -697,6 +882,46 @@ body.dark-mode .btn-like-action {
   border-color: #22c55e;
 }
 
+/* Estados do Modo Rollando na barra inferior */
+.btn-pass-action.is-roll-dice {
+  border-color: #6366f1;
+  background: #eef2ff;
+  color: #4338ca;
+}
+body.dark-mode .btn-pass-action.is-roll-dice {
+  background: #1e1b4b;
+  color: #a5b4fc;
+  border-color: #818cf8;
+}
+
+.btn-like-action.is-marry-ring {
+  border-color: #db2777;
+  background: #fce7f3;
+  color: #be185d;
+}
+body.dark-mode .btn-like-action.is-marry-ring {
+  background: #4a0e2e;
+  color: #f472b6;
+  border-color: #ec4899;
+}
+
+.btn-waifinder-action:disabled,
+.btn-like-action.is-marry-ring:disabled {
+  background: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  border-color: #94a3b8 !important;
+  cursor: not-allowed !important;
+  opacity: 0.65;
+  box-shadow: none !important;
+  transform: none !important;
+}
+body.dark-mode .btn-waifinder-action:disabled,
+body.dark-mode .btn-like-action.is-marry-ring:disabled {
+  background: #1e293b !important;
+  color: #64748b !important;
+  border-color: #475569 !important;
+}
+
 /* Barra de Atalhos Desktop */
 .waifinder-desktop-hints {
   text-align: center;
@@ -742,7 +967,41 @@ body.dark-mode .btn-like-action {
   .waifinder-container {
     padding: 4px 8px 10px 8px;
   }
+  .waifinder-header {
+    padding: 5px 8px;
+  }
+  .waifinder-brand {
+    font-size: 14px;
+    gap: 5px;
+  }
+  .waifinder-brand .brand-icon {
+    font-size: 16px;
+  }
+  .waifinder-header-actions {
+    gap: 4px;
+  }
+  .waifinder-header-btn {
+    padding: 4px 6px;
+    font-size: 11px;
+    gap: 3px;
+  }
+  .btn-side-action {
+    padding: 8px 8px;
+    font-size: 11.5px;
+    gap: 4px;
+    white-space: nowrap;
+  }
   .waifinder-desktop-hints {
     display: none;
+  }
+}
+
+@media (max-width: 375px) {
+  .waifinder-brand {
+    font-size: 13px;
+  }
+  .waifinder-header-btn {
+    padding: 3px 5px;
+    font-size: 10.5px;
   }
 }
