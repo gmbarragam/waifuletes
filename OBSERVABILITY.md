@@ -92,6 +92,8 @@ status HTTP (ou o `statusCode` do erro, no `handler`) é < 500, e remove `http.r
 | Span | Atributos | Eventos |
 |---|---|---|
 | `roll` (filhos: `roll cooldown.consume`/`cooldown.check`, `roll context.load`, `roll pool.select` — filtragem + pesos + sorteio em CPU sobre o pool em memória, com `waifu.roll.candidates`/`special_candidates` —, `roll candidate.load` — inclui JIT do Hub —, `roll wishlist.group`, `roll claim.process`, `roll reward.apply` — filhos `.begin`/`.write`/`.commit` da transação via `withTxSpans` —, `roll daily_limit.check`) | `waifu.pool.size`, `waifu.pool.source` (memory/db/hub), `waifu.roll.rarity`, `waifu.roll.special`, `waifu.roll.jit_fetch`, `waifu.roll.free`, `waifu.roll.gender_filter` | `cooldown.consumed`, `cooldown.blocked`, `pool.loaded`, `cooldown.refunded` |
+| `waifinder roll` (envolve `roll` + reserva/estorno na Ravena) | `waifu.user.id`, `waifu.roll.gender_filter`, `waifu.waifinder.farm_reserved`, `waifu.waifinder.total_rolls` | — |
+| `waifinder marry` (envolve `marry`) | `waifu.user.id` | — |
 | `pool load` | `waifu.pool.size`, `waifu.pool.source` (no startup é raiz de trace próprio) | — |
 | `marry` | `waifu.character.rarity`, `waifu.claim.lock_acquired` | `claim.lock_acquired`, `cooldown.rollback`, `claim.conflict` (`waifu.claim.conflict_code` = P2002/P2034/already_claimed), `tx.commit` |
 | `divorce` | `waifu.character.rarity`, `waifu.divorce.soulmate`, `waifu.divorce.daily_number`, `waifu.divorce.soft_limit_applied`, `waifu.divorce.rank_multiplier`, `waifu.divorce.rarity_position`/`rarity_total`; filho `divorce rank.lookup` (contagem da posição na raridade) | `tx.commit` |

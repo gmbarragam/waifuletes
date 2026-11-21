@@ -15,6 +15,15 @@ import redisPlugin from './plugins/redis.js';
 import { isTrustedRequest } from './plugins/auth.js';
 import { DomainError } from './errors/DomainError.js';
 import { activeSpan, recordError, tagRequestIds } from './telemetry.js';
+import { CooldownService } from './services/CooldownService.js';
+import { CharacterService } from './services/CharacterService.js';
+import { RollService } from './services/RollService.js';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    rollService?: RollService;
+  }
+}
 
 // Rotas públicas
 import { publicCharacterRoutes } from './routes/public/characters.js';
@@ -201,6 +210,18 @@ async function buildServer() {
   // Plugins de infraestrutura
   await fastify.register(prismaPlugin);
   await fastify.register(redisPlugin);
+
+  // Instância compartilhada de RollService (evita duplicar ~200k itens em RAM entre rotas privadas e web)
+  const sharedRollService = new RollService(
+    fastify.prisma,
+    new CooldownService(fastify.redis),
+    new CharacterService(fastify.prisma, fastify.redis)
+  );
+  if (!fastify.hasDecorator('rollService')) {
+    fastify.decorate('rollService', sharedRollService);
+  } else {
+    fastify.rollService = sharedRollService;
+  }
 
   // Tratamento global de erros
   fastify.setErrorHandler((error, request, reply) => {

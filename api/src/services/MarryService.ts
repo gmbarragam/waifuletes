@@ -8,6 +8,7 @@ import { withBusinessSpan, chatIdAttr, userIdAttr, addEvent, setAttrs } from '..
 export interface MarryParams {
   userId: string;
   groupId: string;
+  lockGroupId?: string;
   characterId: string;
 }
 
@@ -29,7 +30,8 @@ export class MarryService {
   }
 
   private async marryImpl(params: MarryParams) {
-    const { userId, groupId, characterId } = params;
+    const { userId, groupId, lockGroupId, characterId } = params;
+    const effectiveLockGroupId = lockGroupId || groupId;
 
     // 1. Localizar personagem de forma flexível (ID, slug ou nome)
     const resolvedChar = await this.characterService.findCharacter(characterId);
@@ -77,9 +79,9 @@ export class MarryService {
     }
 
     // 3. Verificar lock no Redis para o grupo (qualquer um do grupo pode casar durante a janela ativa)
-    let lock = await this.cooldownService.getClaimLock(groupId, targetCharId);
+    let lock = await this.cooldownService.getClaimLock(effectiveLockGroupId, targetCharId);
     if (!lock.locked && characterId !== targetCharId) {
-      lock = await this.cooldownService.getClaimLock(groupId, characterId);
+      lock = await this.cooldownService.getClaimLock(effectiveLockGroupId, characterId);
     }
 
     if (!lock.locked) {
@@ -249,9 +251,9 @@ export class MarryService {
     addEvent('tx.commit');
 
     // 6. Liberar lock do grupo
-    await this.cooldownService.releaseClaimLock(groupId, targetCharId);
+    await this.cooldownService.releaseClaimLock(effectiveLockGroupId, targetCharId);
     if (characterId !== targetCharId) {
-      await this.cooldownService.releaseClaimLock(groupId, characterId);
+      await this.cooldownService.releaseClaimLock(effectiveLockGroupId, characterId);
     }
 
     // 7. Incrementa o contador de casamento diário para esta raridade
@@ -262,10 +264,13 @@ export class MarryService {
 
     const nextClaimAt = new Date(Date.now() + cooldownSecs * 1000);
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { kakera: true },
-    });
+    const [user, dailyMarryState] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { kakera: true },
+      }),
+      this.cooldownService.getDailyMarryStatus(userId),
+    ]);
 
     return {
       success: true,
@@ -273,6 +278,7 @@ export class MarryService {
         message: `Parabéns! Você se casou com ${claimedCharacter.name}! 💍`,
         character: {
           id: claimedCharacter.id,
+          numericId: (claimedCharacter as any).numericId ?? null,
           name: claimedCharacter.name,
           series: claimedCharacter.series,
           rarity: claimedCharacter.baseRarity,
@@ -288,6 +294,8 @@ export class MarryService {
           cooldownSeconds: cooldownSecs,
           nextClaimAt,
         },
+        dailyMarry: dailyMarryState.byRarity[rarity] || null,
+        dailyMarryResetAt: dailyMarryState.nextReset,
       },
     };
   }

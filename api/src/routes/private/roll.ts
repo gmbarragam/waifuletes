@@ -14,12 +14,14 @@ export const privateRollRoutes: FastifyPluginAsync = async (fastify) => {
   const characterService = new CharacterService(fastify.prisma);
   const userService = new UserService(fastify.prisma, fastify.redis);
   const marketService = new MarketService(fastify.prisma, characterService);
-  const rollService = new RollService(fastify.prisma, cooldownService, characterService);
+  const rollService = fastify.rollService ?? new RollService(fastify.prisma, cooldownService, characterService);
 
-  // Inicializa o pool em memória em segundo plano no startup
-  rollService.loadPool().catch((err) => {
-    fastify.log.warn({ err: err.message }, 'Falha ao pré-carregar pool em memória; será carregado sob demanda.');
-  });
+  // Inicializa o pool em memória em segundo plano no startup (exceto em testes)
+  if (process.env.NODE_ENV !== 'test') {
+    rollService.loadPool().catch((err) => {
+      fastify.log.warn({ err: err.message }, 'Falha ao pré-carregar pool em memória; será carregado sob demanda.');
+    });
+  }
 
   fastify.addHook('preHandler', verifyApiKey);
 

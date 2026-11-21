@@ -129,6 +129,9 @@ export class WebSessionService {
         ttl = 3 * 86400;
       }
 
+      // Uso do Waifinder/catálogo autenticado também conta como atividade
+      this.touchLastActive(data.userId).catch(() => {});
+
       return {
         valid: true as const,
         userId: data.userId,

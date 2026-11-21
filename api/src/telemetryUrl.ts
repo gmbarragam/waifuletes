@@ -50,6 +50,12 @@ const SAFE_CLIENT_SEGMENTS = new Set([
   'wiki',
   'media',
   'notify',
+  'waifu',
+  'user-roll-context',
+  'farm-bonus',
+  'reserve',
+  'refund',
+  'notify-legendary-marriage',
 ]);
 const TELEGRAM_METHOD = /^(?:send|edit|delete|get|set|answer|pin|unpin|copy|forward)[A-Z][A-Za-z]{2,40}$/;
 const VERSION_SEGMENT = /^v\d{1,2}$/;

@@ -443,6 +443,7 @@ export class RollService {
         let chosen = await this.prisma.character.findUnique({
           where: { id: chosenId },
           include: {
+            _count: { select: { wishlists: true } },
             haremEntries: {
               select: {
                 id: true,
@@ -465,6 +466,7 @@ export class RollService {
           chosen = await this.prisma.character.findUnique({
             where: { id: chosenId },
             include: {
+              _count: { select: { wishlists: true } },
               haremEntries: {
                 select: {
                   id: true,
@@ -747,6 +749,9 @@ export class RollService {
             imageUrl: this.characterService.getRandomImageUrl(chosen.id, chosen.imageUrls),
             imageUrls: chosen.imageUrls.map((img) => this.characterService.formatImageUrl(chosen.id, img)),
             tags: chosen.tags,
+            likeCount: chosen.likeCount,
+            claimCount: chosen.claimCount,
+            wishlistCount: (chosen as any)._count?.wishlists ?? 0,
           },
           isMythic: Boolean(chosen.isMythic),
           mythicRollRefunded,

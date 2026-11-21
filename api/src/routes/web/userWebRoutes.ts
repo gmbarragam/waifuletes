@@ -16,11 +16,22 @@ import { CatalogService } from '../../services/CatalogService.js';
 import { CollectionService } from '../../services/CollectionService.js';
 import { UserService } from '../../services/UserService.js';
 import { CooldownService } from '../../services/CooldownService.js';
+import { MarryService } from '../../services/MarryService.js';
+import { RollService } from '../../services/RollService.js';
 import { verifyApiKey } from '../../plugins/auth.js';
 import { DomainError } from '../../errors/DomainError.js';
 import { optimizeImageUnder1Mb, MAX_IMAGE_UPLOAD_BYTES } from '../../utils/imageOptimizer.js';
 import { config, activeHostingRates, inactiveHostingRates, ravenaMarketHeaders } from '../../config.js';
 import { toPublicListing, toPublicOffer } from '../../utils/marketPublic.js';
+import {
+  fetchRavenaRollContext,
+  reserveRavenaFarmBonus,
+  refundRavenaFarmBonus,
+  notifyRavenaLegendaryMarriage,
+  buildWaifinderStepBonuses,
+  resolveUserLatestGroupId,
+} from '../../utils/waifinderHelpers.js';
+import { withBusinessSpan, userIdAttr, setAttrs } from '../../telemetry.js';
 import { Rarity, Gender } from '@prisma/client';
 
 interface RavenaBotHealth {
@@ -97,6 +108,8 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
   const catalogService = new CatalogService(fastify.prisma, fastify.redis);
   const collectionService = new CollectionService(fastify.prisma, characterService);
   const userService = new UserService(fastify.prisma, fastify.redis);
+  const marryService = new MarryService(fastify.prisma, cooldownService, characterService);
+  const rollService = fastify.rollService ?? new RollService(fastify.prisma, cooldownService, characterService);
 
   /**
    * Retorna um número de WhatsApp ativo da Ravena para redirecionamento com !mu-adm
@@ -924,6 +937,15 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
       let sessionPublicId: string | null = null;
       let userKakera = 0;
       let userName = '';
+      let userRollsInfo: {
+        availableRolls: number;
+        maxRolls: number;
+        baseAvailableRolls: number;
+        farmRolls: number;
+        farmTickets: number;
+        secondsToNext: number;
+        fullRechargeSeconds: number;
+      } | null = null;
 
       if (token) {
         const session = publicId
@@ -934,16 +956,34 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
           sessionUserId = session.userId;
           sessionPublicId = session.publicId;
 
-          const user = await fastify.prisma.user.findUnique({
-            where: { id: sessionUserId },
-            select: { name: true, kakera: true, publicId: true },
-          });
+          const [user, ravenaCtx] = await Promise.all([
+            fastify.prisma.user.findUnique({
+              where: { id: sessionUserId },
+              select: { name: true, kakera: true, publicId: true },
+            }),
+            fetchRavenaRollContext(sessionUserId),
+          ]);
 
           if (user) {
             userName = user.name;
             userKakera = user.kakera;
             sessionPublicId = user.publicId;
           }
+
+          const extraMaxRolls = ravenaCtx?.extraMaxRolls ?? 0;
+          const farmRolls = ravenaCtx?.farmRolls ?? 0;
+          const farmTickets = ravenaCtx?.farmTickets ?? 0;
+          const rollsState = await cooldownService.getUserRolls(sessionUserId, extraMaxRolls);
+
+          userRollsInfo = {
+            availableRolls: rollsState.availableRolls + farmRolls + farmTickets,
+            maxRolls: rollsState.maxRolls,
+            baseAvailableRolls: rollsState.availableRolls,
+            farmRolls,
+            farmTickets,
+            secondsToNext: rollsState.secondsToNext,
+            fullRechargeSeconds: rollsState.fullRechargeSeconds,
+          };
         }
       }
 
@@ -970,10 +1010,346 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
                 name: userName,
                 publicId: sessionPublicId,
                 kakera: userKakera,
+                rolls: userRollsInfo,
               }
             : null,
         },
       });
+    },
+  });
+
+  /**
+   * Executa um roll real no modo "Rollando" do Waifinder
+   */
+  fastify.post('/api/web/user/:publicId/waifinder/roll', {
+    config: {
+      rateLimit: {
+        max: 40,
+        timeWindow: '1 minute',
+      },
+    },
+    schema: {
+      description: 'Realiza um roll real no Waifinder consumindo saldo de fazenda ou cooldown/donate',
+      tags: ['Usuário (Web)'],
+      params: {
+        type: 'object',
+        required: ['publicId'],
+        properties: { publicId: { type: 'string', maxLength: 128 } },
+      },
+      body: {
+        type: 'object',
+        required: ['token'],
+        additionalProperties: false,
+        properties: {
+          token: { type: 'string', maxLength: 256 },
+          gender: { type: 'string', enum: ['ALL', 'FEMALE', 'MALE'] },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { publicId } = request.params as { publicId: string };
+      const { token, gender } = request.body as {
+        token: string;
+        gender?: 'ALL' | 'FEMALE' | 'MALE';
+      };
+
+      const session = publicId === 'token-session'
+        ? await webSessionService.validateTokenOnly(token)
+        : await webSessionService.validateUserSession(publicId, token);
+
+      if (!session.valid || !session.userId) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Sessão web expirada ou inválida.' },
+        });
+      }
+
+      const userId = session.userId;
+
+      return withBusinessSpan(
+        'waifinder roll',
+        { 'waifu.user.id': userIdAttr(userId), 'waifu.roll.gender_filter': gender || 'ALL' },
+        async () => {
+          // Mutex single-flight para impedir cliques simultâneos ou scripts concorrentes
+          const lockKey = `waifinder:roll:lock:${userId}`;
+          const acquired = await fastify.redis.set(lockKey, '1', 'PX', 1500, 'NX');
+          if (!acquired) {
+            return reply.status(429).send({
+              success: false,
+              error: {
+                code: 'ROLL_IN_PROGRESS',
+                message: 'Aguarde um instante antes de realizar outro roll.',
+              },
+            });
+          }
+
+          const startedAt = Date.now();
+          let reservation: Awaited<ReturnType<typeof reserveRavenaFarmBonus>> | null = null;
+          let farmRefunded = false;
+
+          try {
+            // 1. Reserva bônus da fazenda (se houver) + lê bônus de doador e eventos (falha fechada 503 se Ravena off)
+            reservation = await reserveRavenaFarmBonus(userId);
+
+            const bonuses = buildWaifinderStepBonuses({
+              donorBonuses: reservation.donorBonuses,
+              farmReservedType: reservation.reserved ? reservation.type : null,
+              eventRarosMult: reservation.eventRarosMult,
+              eventWishMult: reservation.eventWishMult,
+            });
+
+            const genderFilter = gender === 'FEMALE' || gender === 'MALE' ? (gender as Gender) : undefined;
+            const waifinderLockGroup = `waifinder:${userId}`;
+
+            // Garante que o registro do grupo virtual não bloqueie ou cause FK (embora lock seja no Redis)
+            const rollResult = await rollService.roll({
+              userId,
+              groupId: waifinderLockGroup,
+              genderFilter,
+              bonuses,
+            });
+
+            if (!rollResult.success) {
+              if (reservation.reserved && reservation.type) {
+                await refundRavenaFarmBonus(userId, reservation.type);
+                farmRefunded = true;
+              }
+
+              const errObj: any = rollResult.error || {};
+              const farmRollsAfter = farmRefunded && reservation.type === 'roll'
+                ? reservation.remainingRolls + 1
+                : reservation.remainingRolls;
+              const farmTicketsAfter = farmRefunded && reservation.type === 'ticket'
+                ? reservation.remainingTickets + 1
+                : reservation.remainingTickets;
+
+              return reply.status(400).send({
+                success: false,
+                error: {
+                  ...errObj,
+                  availableRolls: (errObj.currentRolls ?? 0) + farmRollsAfter + farmTicketsAfter,
+                  maxRolls: errObj.maxRolls ?? 9,
+                  farmRolls: farmRollsAfter,
+                  farmTickets: farmTicketsAfter,
+                },
+              });
+            }
+
+            const data = rollResult.data!;
+            const isMythic = Boolean(data.isMythic);
+
+            if (isMythic && reservation.reserved && reservation.type) {
+              await refundRavenaFarmBonus(userId, reservation.type);
+              farmRefunded = true;
+            }
+
+            const farmRollsAfter = farmRefunded && reservation.type === 'roll'
+              ? reservation.remainingRolls + 1
+              : reservation.remainingRolls;
+            const farmTicketsAfter = farmRefunded && reservation.type === 'ticket'
+              ? reservation.remainingTickets + 1
+              : reservation.remainingTickets;
+
+            // Atualiza lock pessoal do roll ativo no Waifinder (substitui o anterior para impedir cherry-pick)
+            const activeRollKey = `waifinder:active_roll:${userId}`;
+            const prevRaw = await fastify.redis.get(activeRollKey);
+            if (prevRaw) {
+              try {
+                const prev = JSON.parse(prevRaw);
+                if (prev?.characterId && prev.characterId !== data.character.id) {
+                  await cooldownService.releaseClaimLock(waifinderLockGroup, prev.characterId);
+                }
+              } catch (_) {}
+            }
+
+            if (data.available) {
+              await fastify.redis.set(
+                activeRollKey,
+                JSON.stringify({ characterId: data.character.id, rolledAt: Date.now() }),
+                'EX',
+                config.CLAIM_LOCK_SECONDS
+              );
+            } else {
+              await fastify.redis.del(activeRollKey);
+            }
+
+            // Casamento instantâneo por cota em personagem Lendário: notifica nos grupos de avisos
+            if (data.instantMarriage && data.character.baseRarity === 'LEGENDARY') {
+              const user = await fastify.prisma.user.findUnique({
+                where: { id: userId },
+                select: { name: true },
+              });
+              notifyRavenaLegendaryMarriage({
+                character: {
+                  id: data.character.id,
+                  name: data.character.name,
+                  series: data.character.series,
+                  rarity: data.character.baseRarity,
+                  imageUrl: data.character.imageUrl,
+                },
+                userName: user?.name || userId,
+              });
+            }
+
+            const likeTtl = await fastify.redis.ttl(`cooldown:like:${userId}:${data.character.id}`);
+            const totalAvailableRolls = data.rollsRemaining + farmRollsAfter + farmTicketsAfter;
+
+            setAttrs({
+              'waifu.waifinder.farm_reserved': Boolean(reservation.reserved && !farmRefunded),
+              'waifu.waifinder.total_rolls': totalAvailableRolls,
+            });
+
+            return reply.send({
+              success: true,
+              data: {
+                ...data,
+                character: {
+                  ...data.character,
+                  isWishlisted: data.isWishlist,
+                  isLikedToday: likeTtl > 0,
+                },
+                usedFarmBonus: Boolean(reservation.reserved && !farmRefunded) ? reservation.type : null,
+                rolls: {
+                  availableRolls: totalAvailableRolls,
+                  maxRolls: data.maxRolls,
+                  baseAvailableRolls: data.rollsRemaining,
+                  farmRolls: farmRollsAfter,
+                  farmTickets: farmTicketsAfter,
+                  secondsToNext: data.nextRollSeconds,
+                  fullRechargeSeconds: data.fullRechargeSeconds,
+                },
+              },
+            });
+          } catch (err) {
+            if (reservation?.reserved && reservation.type && !farmRefunded) {
+              await refundRavenaFarmBonus(userId, reservation.type);
+            }
+            throw err;
+          } finally {
+            // Garante intervalo mínimo de ~400ms entre rolls do mesmo usuário para evitar rajadas
+            const elapsed = Date.now() - startedAt;
+            const remainingLockMs = Math.max(0, 400 - elapsed);
+            if (remainingLockMs > 0) {
+              await fastify.redis.pexpire(lockKey, remainingLockMs).catch(() => {});
+            } else {
+              await fastify.redis.del(lockKey).catch(() => {});
+            }
+          }
+        }
+      );
+    },
+  });
+
+  /**
+   * Realiza o casamento com o personagem ativo sorteado no Waifinder
+   */
+  fastify.post('/api/web/user/:publicId/waifinder/marry', {
+    config: {
+      rateLimit: {
+        max: 25,
+        timeWindow: '1 minute',
+      },
+    },
+    schema: {
+      description: 'Casa com o personagem atualmente rolado no Waifinder respeitando limites e cooldowns por raridade',
+      tags: ['Usuário (Web)'],
+      params: {
+        type: 'object',
+        required: ['publicId'],
+        properties: { publicId: { type: 'string', maxLength: 128 } },
+      },
+      body: {
+        type: 'object',
+        required: ['token', 'characterId'],
+        additionalProperties: false,
+        properties: {
+          token: { type: 'string', maxLength: 256 },
+          characterId: { type: 'string', minLength: 1, maxLength: 128 },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { publicId } = request.params as { publicId: string };
+      const { token, characterId } = request.body as { token: string; characterId: string };
+
+      const session = publicId === 'token-session'
+        ? await webSessionService.validateTokenOnly(token)
+        : await webSessionService.validateUserSession(publicId, token);
+
+      if (!session.valid || !session.userId) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Sessão web expirada ou inválida.' },
+        });
+      }
+
+      const userId = session.userId;
+
+      return withBusinessSpan(
+        'waifinder marry',
+        { 'waifu.user.id': userIdAttr(userId) },
+        async () => {
+          const activeRollKey = `waifinder:active_roll:${userId}`;
+          const activeRaw = await fastify.redis.get(activeRollKey);
+          let activeData: { characterId?: string } | null = null;
+          if (activeRaw) {
+            try {
+              activeData = JSON.parse(activeRaw);
+            } catch (_) {}
+          }
+
+          if (!activeData?.characterId || activeData.characterId !== characterId) {
+            return reply.status(400).send({
+              success: false,
+              error: {
+                code: 'LOCK_EXPIRED',
+                message: 'Este personagem não corresponde ao seu roll ativo no Waifinder ou o tempo de 5 minutos expirou.',
+              },
+            });
+          }
+
+          const claimedInGroup = await resolveUserLatestGroupId(fastify.prisma, userId);
+          const user = await fastify.prisma.user.findUnique({
+            where: { id: userId },
+            select: { name: true, platform: true },
+          });
+
+          await userService.ensureUserAndGroup({
+            userId,
+            groupId: claimedInGroup,
+            name: user?.name,
+            platform: user?.platform || 'WHATSAPP',
+          });
+
+          const marryResult = await marryService.marry({
+            userId,
+            groupId: claimedInGroup,
+            lockGroupId: `waifinder:${userId}`,
+            characterId,
+          });
+
+          if (!marryResult.success) {
+            return reply.status(400).send(marryResult);
+          }
+
+          await fastify.redis.del(activeRollKey);
+
+          if (marryResult.data?.character?.rarity === 'LEGENDARY') {
+            notifyRavenaLegendaryMarriage({
+              character: {
+                id: marryResult.data.character.id,
+                name: marryResult.data.character.name,
+                series: marryResult.data.character.series,
+                rarity: marryResult.data.character.rarity,
+                imageUrl: marryResult.data.character.imageUrl,
+              },
+              userName: user?.name || userId,
+            });
+          }
+
+          return reply.send(marryResult);
+        }
+      );
     },
   });
 

@@ -4,6 +4,7 @@ import { config } from '../config.js';
 
 export interface CatalogCardItem {
   id: string;
+  numericId: number | null;
   name: string;
   series: string;
   description: string | null;
@@ -13,6 +14,7 @@ export interface CatalogCardItem {
   imageUrls: string[];
   likeCount: number;
   claimCount: number;
+  wishlistCount: number;
   gender: string;
   tags: string[];
   isWishlisted?: boolean;
@@ -206,6 +208,7 @@ export class CatalogService {
       where: { id: { in: chosenIds } },
       select: {
         id: true,
+        numericId: true,
         name: true,
         series: true,
         description: true,
@@ -217,6 +220,11 @@ export class CatalogService {
         claimCount: true,
         gender: true,
         tags: true,
+        _count: {
+          select: {
+            wishlists: true,
+          },
+        },
       },
     });
 
@@ -275,6 +283,7 @@ export class CatalogService {
 
       orderedItems.push({
         id: char.id,
+        numericId: char.numericId ?? null,
         name: char.name,
         series: char.series,
         description: char.description,
@@ -284,6 +293,7 @@ export class CatalogService {
         imageUrls: formattedImageUrls,
         likeCount: char.likeCount,
         claimCount: char.claimCount,
+        wishlistCount: char._count?.wishlists ?? 0,
         gender: char.gender,
         tags: char.tags,
         isWishlisted: userWishlistIds.has(char.id),
