@@ -175,6 +175,14 @@
               <button type="button" class="btn-retro btn-sm btn-gold" id="btn-submit-edit-info" style="width: 100%;" disabled title="Preencha os dados necessários para liberar o envio">
                 <i class="fas fa-paper-plane"></i> Enviar Sugestão de Dados
               </button>
+              <div id="edit-info-progress-container" class="hidden" style="margin-top: 10px; background: rgba(0,0,0,0.03); border: var(--border-retro); border-radius: 6px; padding: 8px 12px;">
+                <div style="background: #e2e8f0; border-radius: 4px; height: 14px; overflow: hidden; border: 1px solid #cbd5e1;">
+                  <div id="edit-info-progress-bar" style="background: #eab308; height: 100%; width: 0%; transition: width 0.15s ease;"></div>
+                </div>
+                <div id="edit-info-progress-text" style="font-size: 11px; font-weight: 800; color: #854d0e; text-align: center; margin-top: 5px;">
+                  Aguarde... 0%
+                </div>
+              </div>
             </div>
 
             <!-- Subaba Fotos -->
@@ -235,6 +243,14 @@
                     <button type="button" class="btn-retro btn-sm btn-gold" id="btn-submit-crop" style="width: 100%; margin-top: 14px;">
                       <i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto
                     </button>
+                    <div id="crop-progress-container" class="hidden" style="margin-top: 10px; background: rgba(0,0,0,0.03); border: var(--border-retro); border-radius: 6px; padding: 8px 12px;">
+                      <div style="background: #e2e8f0; border-radius: 4px; height: 14px; overflow: hidden; border: 1px solid #cbd5e1;">
+                        <div id="crop-progress-bar" style="background: #eab308; height: 100%; width: 0%; transition: width 0.15s ease;"></div>
+                      </div>
+                      <div id="crop-progress-text" style="font-size: 11px; font-weight: 800; color: #854d0e; text-align: center; margin-top: 5px;">
+                        Aguarde... 0%
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -377,7 +393,9 @@
     },
 
     _isAlreadyLegendary() {
-      return Boolean(this._activeCharacter) && (this._activeCharacter.baseRarity || '') === 'LEGENDARY';
+      if (!this._activeCharacter) return false;
+      const r = (this._activeCharacter.baseRarity || this._activeCharacter.rarity || '').toUpperCase();
+      return r === 'LEGENDARY';
     },
 
     _marriedGuardActive() {
@@ -558,10 +576,11 @@
         }
       }
 
+      const curRarity = (this._activeCharacter.baseRarity || this._activeCharacter.rarity || 'COMMON').toUpperCase();
       const nameChanged = suggestedName !== (this._activeCharacter.name || '').trim();
       const seriesChanged = suggestedSeries !== (this._activeCharacter.series || '').trim();
       const genderChanged = suggestedGender !== (this._activeCharacter.gender || 'FEMALE');
-      const rarityChanged = suggestedRarity !== (this._activeCharacter.baseRarity || 'COMMON');
+      const rarityChanged = suggestedRarity !== curRarity;
       const curTagsNorm = [...(this._activeCharacter.tags || [])].sort().join(',');
       const sugTagsNorm = [...suggestedTags].sort().join(',');
       const tagsChanged = sugTagsNorm !== curTagsNorm;
@@ -731,6 +750,12 @@
     _cancelPhotoAction() {
       document.getElementById('user-photo-action-box')?.classList.add('hidden');
       document.getElementById('cropper-container')?.classList.add('hidden');
+      document.getElementById('crop-progress-container')?.classList.add('hidden');
+      const btnCrop = document.getElementById('btn-submit-crop');
+      if (btnCrop) {
+        btnCrop.disabled = false;
+        btnCrop.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto';
+      }
       if (this._cropper) {
         this._cropper.destroy();
         this._cropper = null;
@@ -773,6 +798,12 @@
       }
 
       this._activeCharacter = char || { id: targetId, name: characterName, baseRarity: currentRarity };
+      if (!this._activeCharacter.baseRarity && this._activeCharacter.rarity) {
+        this._activeCharacter.baseRarity = this._activeCharacter.rarity;
+      }
+      if (!this._activeCharacter.baseRarity && currentRarity) {
+        this._activeCharacter.baseRarity = currentRarity;
+      }
       this._activeCharacter.wasEverMarried = Boolean(
         this._activeCharacter.wasEverMarried ||
         this._activeCharacter.isClaimed ||
@@ -813,7 +844,7 @@
             ? '⭐ Lendário (Criar Novo Personagem no Catálogo)'
             : '⭐ Lendário';
         }
-        editRarity.value = this._activeCharacter.baseRarity || currentRarity || 'COMMON';
+        editRarity.value = (this._activeCharacter.baseRarity || this._activeCharacter.rarity || currentRarity || 'COMMON').toUpperCase();
       }
 
       this._tagsState = Array.isArray(this._activeCharacter.tags) ? [...this._activeCharacter.tags] : [];
@@ -918,6 +949,10 @@
       const btnCrop = document.getElementById('btn-submit-crop');
       const reason = (document.getElementById('suggest-photo-reason')?.value || '').trim();
 
+      const progressContainer = document.getElementById('crop-progress-container');
+      const progressBar = document.getElementById('crop-progress-bar');
+      const progressText = document.getElementById('crop-progress-text');
+
       const sendPhoto = async (imagePayload) => {
         const formData = new FormData();
         formData.append('token', this._token);
@@ -928,11 +963,33 @@
           formData.append('targetPhoto', this._targetPhoto);
         }
         formData.append('reason', reason);
-        formData.append('image', imagePayload, 'user_photo.png');
+        formData.append('image', imagePayload, 'user_photo.jpg');
 
-        global.Api?.showLoading('Aguarde... Enviando foto...', 'Enviando imagem para a moderação...');
+        if (progressContainer) progressContainer.classList.remove('hidden');
+        if (progressBar) progressBar.style.width = '0%';
+        if (progressText) progressText.textContent = 'Aguarde... 0%';
+
+        if (btnCrop) {
+          btnCrop.disabled = true;
+          btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+        }
+
+        const onProgress = (percent) => {
+          if (progressBar) progressBar.style.width = `${percent}%`;
+          if (progressText) {
+            if (percent < 100) {
+              progressText.textContent = `Aguarde... ${percent}%`;
+            } else {
+              progressText.textContent = 'Processando no servidor... 100%';
+            }
+          }
+        };
+
         try {
-          const res = await global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData);
+          const res = await (global.Api?.uploadWithProgress
+            ? global.Api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
+            : global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData));
+
           if (!res?.success) {
             global.Api?.showToast(res?.error?.message || 'Falha ao enviar foto.', '❌');
             return;
@@ -944,11 +1001,14 @@
           this.close();
           global.Api?.showToast(msg, '🖼️');
           if (this._onSuccess) this._onSuccess(res);
-        } catch (_) {
-          global.Api?.showToast('Erro de comunicação ao enviar imagem.', '❌');
+        } catch (err) {
+          global.Api?.showToast(err?.message || 'Erro de comunicação ao enviar imagem.', '❌');
         } finally {
-          global.Api?.hideLoading();
-          if (btnCrop) btnCrop.disabled = false;
+          if (progressContainer) progressContainer.classList.add('hidden');
+          if (btnCrop) {
+            btnCrop.disabled = false;
+            btnCrop.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto';
+          }
           this._isSubmitting = false;
         }
       };
@@ -960,27 +1020,54 @@
         } catch (_) {}
 
         if (canvas) {
-          if (btnCrop) btnCrop.disabled = true;
+          if (btnCrop) {
+            btnCrop.disabled = true;
+            btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Otimizando foto...';
+          }
           this._isSubmitting = true;
-          canvas.toBlob((blob) => {
-            if (blob) {
-              sendPhoto(blob);
-            } else if (file) {
-              sendPhoto(file);
-            } else {
-              global.Api?.showToast('Falha ao processar recorte de imagem.', '❌');
-              if (btnCrop) btnCrop.disabled = false;
-              this._isSubmitting = false;
-            }
-          }, 'image/png');
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                sendPhoto(blob);
+              } else if (file) {
+                (async () => {
+                  try {
+                    const compressed = await (global.Api?.compressImageFile ? global.Api.compressImageFile(file, 900, 1400, 0.85) : file);
+                    sendPhoto(compressed);
+                  } catch (_) {
+                    sendPhoto(file);
+                  }
+                })();
+              } else {
+                global.Api?.showToast('Falha ao processar recorte de imagem.', '❌');
+                if (btnCrop) {
+                  btnCrop.disabled = false;
+                  btnCrop.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Foto';
+                }
+                this._isSubmitting = false;
+              }
+            },
+            'image/jpeg',
+            0.85
+          );
           return;
         }
       }
 
       if (file) {
-        if (btnCrop) btnCrop.disabled = true;
+        if (btnCrop) {
+          btnCrop.disabled = true;
+          btnCrop.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Otimizando foto...';
+        }
         this._isSubmitting = true;
-        sendPhoto(file);
+        (async () => {
+          try {
+            const compressed = await (global.Api?.compressImageFile ? global.Api.compressImageFile(file, 900, 1400, 0.85) : file);
+            sendPhoto(compressed);
+          } catch (_) {
+            sendPhoto(file);
+          }
+        })();
         return;
       }
 
@@ -1030,9 +1117,36 @@
         }
 
         const btnEdit = document.getElementById('btn-submit-edit-info');
-        if (btnEdit) btnEdit.disabled = true;
+        if (btnEdit) {
+          btnEdit.disabled = true;
+          btnEdit.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+        }
         this._isSubmitting = true;
-        global.Api?.showLoading('Aguarde... Enviando sugestão de versão lendária...', 'Fazendo upload da foto e cadastrando proposta...');
+
+        const progressContainer = document.getElementById('edit-info-progress-container');
+        const progressBar = document.getElementById('edit-info-progress-bar');
+        const progressText = document.getElementById('edit-info-progress-text');
+
+        if (progressContainer) progressContainer.classList.remove('hidden');
+        if (progressBar) progressBar.style.width = '0%';
+        if (progressText) progressText.textContent = 'Aguarde... 0%';
+
+        const onProgress = (percent) => {
+          if (progressBar) progressBar.style.width = `${percent}%`;
+          if (progressText) {
+            if (percent < 100) {
+              progressText.textContent = `Aguarde... ${percent}%`;
+            } else {
+              progressText.textContent = 'Processando no servidor... 100%';
+            }
+          }
+        };
+
+        let compressedPhoto = photoFile;
+        try {
+          if (progressText) progressText.textContent = 'Otimizando foto...';
+          compressedPhoto = await (global.Api?.compressImageFile ? global.Api.compressImageFile(photoFile, 900, 1400, 0.85) : photoFile);
+        } catch (_) {}
 
         const chosenGender = suggestedGender || this._activeCharacter.gender || 'FEMALE';
         const formData = new FormData();
@@ -1047,10 +1161,13 @@
         formData.append('confirmationPhrase', phraseInput);
         if (suggestedDescription) formData.append('description', suggestedDescription);
         formData.append('reason', reason ? `[Versão Lendária] ${reason}` : '[Versão Lendária]');
-        formData.append('photo', photoFile);
+        formData.append('photo', compressedPhoto, 'legendary.jpg');
 
         try {
-          const res = await global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData);
+          const res = await (global.Api?.uploadWithProgress
+            ? global.Api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
+            : global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData));
+
           if (!res?.success) {
             global.Api?.showToast(res?.error?.message || 'Falha ao enviar sugestão lendária.', '❌');
             return;
@@ -1059,20 +1176,21 @@
           this.close();
           global.Api?.showToast('Sugestão de novo personagem na versão Lendária enviada para moderação!', '⭐');
           if (this._onSuccess) this._onSuccess(res);
-        } catch (_) {
-          global.Api?.showToast('Erro de comunicação ao enviar sugestão.', '❌');
+        } catch (err) {
+          global.Api?.showToast(err?.message || 'Erro de comunicação ao enviar sugestão.', '❌');
         } finally {
-          global.Api?.hideLoading();
+          if (progressContainer) progressContainer.classList.add('hidden');
           this._isSubmitting = false;
           this._updateEditInfoSubmitButtonState();
         }
         return;
       }
 
+      const curRarity = (this._activeCharacter.baseRarity || this._activeCharacter.rarity || 'COMMON').toUpperCase();
       const nameChanged = suggestedName && suggestedName !== (this._activeCharacter.name || '').trim();
       const seriesChanged = suggestedSeries && suggestedSeries !== (this._activeCharacter.series || '').trim();
       const genderChanged = suggestedGender && suggestedGender !== (this._activeCharacter.gender || '');
-      const rarityChanged = suggestedRarity && suggestedRarity !== (this._activeCharacter.baseRarity || '');
+      const rarityChanged = suggestedRarity && suggestedRarity !== curRarity;
       const curTagsNorm = [...(this._activeCharacter.tags || [])].sort().join(',');
       const sugTagsNorm = [...suggestedTags].sort().join(',');
       const tagsChanged = sugTagsNorm !== curTagsNorm;
@@ -1085,7 +1203,10 @@
       }
 
       const btnEdit = document.getElementById('btn-submit-edit-info');
-      if (btnEdit) btnEdit.disabled = true;
+      if (btnEdit) {
+        btnEdit.disabled = true;
+        btnEdit.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+      }
       this._isSubmitting = true;
       global.Api?.showLoading('Aguarde... Enviando sugestão...', 'Enviando alterações para avaliação da moderação...');
 

@@ -645,8 +645,17 @@ function setupEventListeners() {
     formNewChar.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('btn-submit-new-char');
-      if (btn) btn.disabled = true;
-      Api.showLoading('Aguarde... Enviando novo personagem...', 'Enviando imagem e cadastrando proposta...');
+      const progressContainer = document.getElementById('new-char-progress-container');
+      const progressBar = document.getElementById('new-char-progress-bar');
+      const progressText = document.getElementById('new-char-progress-text');
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+      }
+      if (progressContainer) progressContainer.classList.remove('hidden');
+      if (progressBar) progressBar.style.width = '0%';
+      if (progressText) progressText.textContent = 'Aguarde... 0%';
 
       const name = document.getElementById('new-char-name').value.trim();
       const series = document.getElementById('new-char-series').value.trim();
@@ -656,6 +665,16 @@ function setupEventListeners() {
       const description = document.getElementById('new-char-description').value.trim();
       const reason = document.getElementById('new-char-reason').value.trim();
       const photoFile = document.getElementById('new-char-photo').files?.[0];
+
+      let fileToSend = photoFile;
+      if (photoFile) {
+        if (progressText) progressText.textContent = 'Otimizando foto...';
+        try {
+          fileToSend = await Api.compressImageFile(photoFile, 900, 1400, 0.85);
+        } catch (_) {
+          fileToSend = photoFile;
+        }
+      }
 
       const formData = new FormData();
       formData.append('token', userSessionToken);
@@ -668,12 +687,26 @@ function setupEventListeners() {
       formData.append('tags', tags);
       formData.append('description', description);
       formData.append('reason', reason);
-      if (photoFile) {
-        formData.append('photo', photoFile);
+      if (fileToSend) {
+        formData.append('photo', fileToSend);
       }
 
+      const onProgress = (percent) => {
+        if (progressBar) progressBar.style.width = `${percent}%`;
+        if (progressText) {
+          if (percent < 100) {
+            progressText.textContent = `Aguarde... ${percent}%`;
+          } else {
+            progressText.textContent = 'Processando no servidor... 100%';
+          }
+        }
+      };
+
       try {
-        const res = await Api.post(`/api/web/user/${userPublicId}/suggestions`, formData);
+        const res = await (Api.uploadWithProgress
+          ? Api.uploadWithProgress(`/api/web/user/${userPublicId}/suggestions`, formData, onProgress)
+          : Api.post(`/api/web/user/${userPublicId}/suggestions`, formData));
+
         if (res.success) {
           closeModal('modal-suggest-character');
           Api.showToast('Sugestão enviada com sucesso! A moderação e o Telegram foram notificados.', '✨');
@@ -682,10 +715,13 @@ function setupEventListeners() {
           Api.showToast(res.error?.message || 'Falha ao enviar sugestão.', '❌');
         }
       } catch (err) {
-        Api.showToast('Erro de comunicação ao enviar sugestão.', '❌');
+        Api.showToast(err?.message || 'Erro de comunicação ao enviar sugestão.', '❌');
       } finally {
-        Api.hideLoading();
-        if (btn) btn.disabled = false;
+        if (progressContainer) progressContainer.classList.add('hidden');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar Sugestão de Personagem';
+        }
       }
     });
   }

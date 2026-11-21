@@ -144,6 +144,121 @@ const Api = {
     return this.request(url, 'DELETE', null, headers, options);
   },
 
+  /**
+   * Compacta um arquivo de imagem diretamente no navegador via Canvas.
+   * Reduz fotos pesadas da galeria (10MB+) para arquivos JPEG leves (~50KB-120KB) em milissegundos.
+   */
+  compressImageFile(file, maxWidth = 900, maxHeight = 1400, quality = 0.85) {
+    return new Promise((resolve) => {
+      if (!file || !(file instanceof Blob) || !file.type || !file.type.startsWith('image/')) {
+        return resolve(file);
+      }
+      // Se for GIF animado, preserva intacto para manter a animação
+      if (file.type === 'image/gif') {
+        return resolve(file);
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxWidth || height > maxHeight) {
+            const ratio = Math.min(maxWidth / width, maxHeight / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, width);
+          canvas.height = Math.max(1, height);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(file);
+
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob(
+            (blob) => {
+              if (blob && (blob.size < file.size || file.size > 200 * 1024)) {
+                const baseName = (file.name || 'image').replace(/\.[^/.]+$/, '');
+                const compressedFile = new File([blob], `${baseName}.jpg`, {
+                  type: 'image/jpeg',
+                  lastModified: Date.now(),
+                });
+                resolve(compressedFile);
+              } else {
+                resolve(file);
+              }
+            },
+            'image/jpeg',
+            quality
+          );
+        };
+        img.onerror = () => resolve(file);
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  },
+
+  /**
+   * Realiza upload de FormData via XMLHttpRequest com acompanhamento de progresso em tempo real (0% a 100%).
+   */
+  uploadWithProgress(url, formData, onProgress = null) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('Accept', 'application/json');
+
+      if (xhr.upload && typeof onProgress === 'function') {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) {
+            const percent = Math.min(100, Math.max(1, Math.round((e.loaded / e.total) * 100)));
+            onProgress(percent);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        let json;
+        try {
+          json = JSON.parse(xhr.responseText);
+        } catch (_) {
+          json = { success: xhr.status >= 200 && xhr.status < 300, rawText: xhr.responseText };
+        }
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(json);
+        } else {
+          if (xhr.status === 413) {
+            json = json || {};
+            json.success = false;
+            json.error = { code: 'PAYLOAD_TOO_LARGE', message: 'A imagem enviada é muito grande! Compacte ela antes' };
+          } else if (!json || !json.error) {
+            json = {
+              success: false,
+              error: { message: `Erro HTTP ${xhr.status}: ${xhr.statusText || 'Falha na resposta do servidor'}` },
+            };
+          }
+          resolve(json);
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Erro de conexão ao enviar imagem. Verifique sua conexão com a internet.'));
+      };
+
+      xhr.ontimeout = () => {
+        reject(new Error('Tempo esgotado ao enviar imagem. Tente novamente.'));
+      };
+
+      xhr.send(formData);
+    });
+  },
+
   showToast(message, icon = '✨') {
     if (!message) return;
     const now = Date.now();

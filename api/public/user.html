@@ -877,11 +877,21 @@
             <input type="text" id="new-char-reason" class="retro-input" placeholder="Ex: Personagem muito popular e amado pela comunidade!">
           </div>
 
-          <div class="modal-footer" style="padding: 12px 0 0 0; border-top: none;">
-            <button type="button" class="btn-retro btn-sm" onclick="closeModal('modal-suggest-character')">Cancelar</button>
-            <button type="submit" class="btn-retro btn-sm btn-gold" id="btn-submit-new-char">
-              <i class="fas fa-paper-plane"></i> Enviar Sugestão de Personagem
-            </button>
+          <div class="modal-footer" style="padding: 12px 0 0 0; border-top: none; flex-direction: column; align-items: stretch;">
+            <div style="display: flex; justify-content: flex-end; gap: 8px;">
+              <button type="button" class="btn-retro btn-sm" onclick="closeModal('modal-suggest-character')">Cancelar</button>
+              <button type="submit" class="btn-retro btn-sm btn-gold" id="btn-submit-new-char">
+                <i class="fas fa-paper-plane"></i> Enviar Sugestão de Personagem
+              </button>
+            </div>
+            <div id="new-char-progress-container" class="hidden" style="margin-top: 10px; background: rgba(0,0,0,0.03); border: var(--border-retro); border-radius: 6px; padding: 8px 12px; width: 100%;">
+              <div style="background: #e2e8f0; border-radius: 4px; height: 14px; overflow: hidden; border: 1px solid #cbd5e1;">
+                <div id="new-char-progress-bar" style="background: #eab308; height: 100%; width: 0%; transition: width 0.15s ease;"></div>
+              </div>
+              <div id="new-char-progress-text" style="font-size: 11px; font-weight: 800; color: #854d0e; text-align: center; margin-top: 5px;">
+                Aguarde... 0%
+              </div>
+            </div>
           </div>
         </form>
       </div>
@@ -1832,8 +1842,8 @@
   <div id="retro-toast" class="retro-toast hidden"></div>
 
   <script src="/vendor/cropper.min.js"></script>
-  <script src="/js/api.js?v=20261121-waifinder-roll-ui"></script>
-  <script src="/js/suggestion-modal.js?v=20261121-suggestions-fix"></script>
-  <script src="/js/user.js?v=20261121-suggestions-fix"></script>
+  <script src="/js/api.js?v=20261121-upload-progress"></script>
+  <script src="/js/suggestion-modal.js?v=20261121-upload-progress"></script>
+  <script src="/js/user.js?v=20261121-upload-progress"></script>
 </body>
 </html>
