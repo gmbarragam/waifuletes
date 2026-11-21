@@ -3,6 +3,8 @@
 (function (global) {
   'use strict';
 
+  const getApi = () => (typeof window !== 'undefined' && window.Api) || global.Api || (typeof Api !== 'undefined' ? Api : null) || (typeof globalThis !== 'undefined' ? globalThis.Api : null);
+
   const RARITY_CONFIG = {
     COMMON:    { emoji: '⚪', label: 'Comum',    color: '#94a3b8' },
     UNCOMMON:  { emoji: '🟢', label: 'Incomum',  color: '#22c55e' },
@@ -12,8 +14,9 @@
   };
 
   function escapeHtml(str) {
-    if (global.Api && typeof global.Api.escapeHtml === 'function') {
-      return global.Api.escapeHtml(str);
+    const api = getApi();
+    if (api && typeof api.escapeHtml === 'function') {
+      return api.escapeHtml(str);
     }
     if (str === null || str === undefined) return '';
     return String(str)
@@ -167,10 +170,13 @@
                 <textarea id="suggest-edit-description" class="retro-textarea" rows="3" placeholder="Informações biográficas da waifu/personagem..."></textarea>
               </div>
 
-              <div class="form-group">
+              <div class="form-group" style="margin-bottom: 8px;">
                 <label class="retro-label">Justificativa da Mudança (obrigatório, mín. 5 caracteres):</label>
                 <textarea id="suggest-edit-reason" class="retro-textarea" rows="2" placeholder="Por que essas alterações devem ser aplicadas?"></textarea>
               </div>
+
+              <!-- Feedback explicativo dinâmico do botão -->
+              <div id="suggest-edit-hint" style="font-size: 11px; margin-bottom: 8px; text-align: center; font-weight: 700; line-height: 1.4; padding: 6px 10px; border-radius: 4px; display: none;"></div>
 
               <button type="button" class="btn-retro btn-sm btn-gold" id="btn-submit-edit-info" style="width: 100%;" disabled title="Preencha os dados necessários para liberar o envio">
                 <i class="fas fa-paper-plane"></i> Enviar Sugestão de Dados
@@ -309,7 +315,7 @@
       document.getElementById('suggest-legendary-photo-input')?.addEventListener('change', (e) => {
         const file = e.target.files?.[0];
         if (file && file.size > 10 * 1024 * 1024) {
-          global.Api?.showToast('A imagem enviada é muito grande! Compacte ela antes', '⚠️');
+          getApi()?.showToast('A imagem enviada é muito grande! Compacte ela antes', '⚠️');
           e.target.value = '';
           return;
         }
@@ -358,7 +364,7 @@
           if (!file) return;
 
           if (file.size > 10 * 1024 * 1024) {
-            global.Api?.showToast('A imagem enviada é muito grande! Compacte ela antes', '⚠️');
+            getApi()?.showToast('A imagem enviada é muito grande! Compacte ela antes', '⚠️');
             fileInput.value = '';
             return;
           }
@@ -531,9 +537,17 @@
 
     _updateEditInfoSubmitButtonState() {
       const btn = document.getElementById('btn-submit-edit-info');
+      const hint = document.getElementById('suggest-edit-hint');
       if (!btn) return;
       if (!this._activeCharacter) {
         btn.disabled = true;
+        if (hint) {
+          hint.style.display = 'block';
+          hint.style.background = '#fef2f2';
+          hint.style.color = '#dc2626';
+          hint.style.border = '1px solid #fecaca';
+          hint.textContent = '⚠️ Personagem não carregado.';
+        }
         return;
       }
 
@@ -555,13 +569,32 @@
         const canSubmit = isReasonValid && isPhraseValid && this._countdownFinished && Boolean(photoFile);
 
         btn.disabled = !canSubmit;
-        if (!canSubmit) {
-          if (!isPhraseValid) btn.title = 'Digite a frase de confirmação obrigatória para liberar o envio.';
-          else if (!this._countdownFinished) btn.title = 'Aguarde o término do contador de 30 segundos.';
-          else if (!photoFile) btn.title = 'Selecione uma nova foto para a versão lendária.';
-          else if (!isReasonValid) btn.title = 'Informe uma justificativa com pelo menos 5 caracteres.';
-        } else {
-          btn.title = 'Enviar sugestão de novo personagem lendário';
+        if (hint) {
+          hint.style.display = 'block';
+          if (!canSubmit) {
+            hint.style.background = '#fef2f2';
+            hint.style.color = '#dc2626';
+            hint.style.border = '1px solid #fecaca';
+            if (!isPhraseValid) {
+              hint.textContent = '⚠️ Digite a frase de confirmação obrigatória para liberar o envio.';
+              btn.title = hint.textContent;
+            } else if (!this._countdownFinished) {
+              hint.textContent = `⏳ Aguarde o término do contador de ${this._countdownRemaining}s para liberar o envio.`;
+              btn.title = hint.textContent;
+            } else if (!photoFile) {
+              hint.textContent = '⚠️ Selecione uma nova foto para a versão lendária.';
+              btn.title = hint.textContent;
+            } else if (!isReasonValid) {
+              hint.textContent = '⚠️ Informe uma justificativa com pelo menos 5 caracteres.';
+              btn.title = hint.textContent;
+            }
+          } else {
+            hint.style.background = '#f0fdf4';
+            hint.style.color = '#15803d';
+            hint.style.border = '1px solid #bbf7d0';
+            hint.textContent = '⭐ Pronto para enviar a nova versão lendária!';
+            btn.title = 'Enviar sugestão de novo personagem lendário';
+          }
         }
         return;
       }
@@ -571,7 +604,15 @@
         const asksLegendary = /\b(lenda\w*|legend\w*|upgrade\w*|subir raridade|aumentar raridade|mudar raridade|virar lenda\w*|passar pra lenda\w*|bota.*lenda\w*|coloca.*lenda\w*|p[oõ]e.*lenda\w*)/i.test(normReason);
         if (asksLegendary) {
           btn.disabled = true;
-          btn.title = 'Personagens casados não podem pedir upgrade para Lendário na justificativa. A raridade máxima permitida é ÉPICO.';
+          const msg = '🚫 Personagens casados não podem pedir upgrade para Lendário na justificativa. A raridade máxima permitida é ÉPICO.';
+          btn.title = msg;
+          if (hint) {
+            hint.style.display = 'block';
+            hint.style.background = '#fef2f2';
+            hint.style.color = '#dc2626';
+            hint.style.border = '1px solid #fecaca';
+            hint.textContent = msg;
+          }
           return;
         }
       }
@@ -591,14 +632,27 @@
       const canSubmit = hasAnyChange && isReasonValid;
 
       btn.disabled = !canSubmit;
-      if (!canSubmit) {
-        if (!hasAnyChange) {
-          btn.title = 'Altere pelo menos um dado do personagem (nome, série, gênero, raridade, tags ou descrição).';
-        } else if (!isReasonValid) {
-          btn.title = 'Informe uma justificativa com pelo menos 5 caracteres.';
+      if (hint) {
+        hint.style.display = 'block';
+        if (!canSubmit) {
+          hint.style.background = '#fef2f2';
+          hint.style.color = '#dc2626';
+          hint.style.border = '1px solid #fecaca';
+          if (!hasAnyChange && !isReasonValid) {
+            hint.textContent = 'ℹ️ Altere pelo menos um dado (nome, série, gênero, raridade, tags ou biografia) e informe uma justificativa com no mínimo 5 caracteres para liberar o envio.';
+          } else if (!hasAnyChange) {
+            hint.textContent = 'ℹ️ Modifique ao menos um campo do personagem acima para liberar o envio.';
+          } else if (!isReasonValid) {
+            hint.textContent = 'ℹ️ Preencha a justificativa com pelo menos 5 caracteres para liberar o envio.';
+          }
+          btn.title = hint.textContent;
+        } else {
+          hint.style.background = '#f0fdf4';
+          hint.style.color = '#15803d';
+          hint.style.border = '1px solid #bbf7d0';
+          hint.textContent = '✅ Pronto para enviar! Clique no botão abaixo para submeter sua sugestão.';
+          btn.title = 'Enviar sugestão de dados';
         }
-      } else {
-        btn.title = 'Enviar sugestão de dados';
       }
     },
 
@@ -631,12 +685,12 @@
       if (!rawTag) return;
 
       if (rawTag.length < 2 || rawTag.length > 30) {
-        global.Api?.showToast('A tag deve ter entre 2 e 30 caracteres.', '⚠️');
+        getApi()?.showToast('A tag deve ter entre 2 e 30 caracteres.', '⚠️');
         return;
       }
 
       if (this._tagsState.includes(rawTag)) {
-        global.Api?.showToast('Esta tag já foi adicionada.', 'ℹ️');
+        getApi()?.showToast('Esta tag já foi adicionada.', 'ℹ️');
         return;
       }
 
@@ -665,11 +719,16 @@
       }
 
       this._photosList.forEach((src, idx) => {
+        let displaySrc = src;
+        if (displaySrc && !displaySrc.startsWith('http://') && !displaySrc.startsWith('https://') && !displaySrc.startsWith('/') && !displaySrc.startsWith('data:')) {
+          displaySrc = '/media/' + displaySrc;
+        }
+
         const item = document.createElement('div');
         item.style.cssText = 'position: relative; border: 1.5px solid #2d241e; border-radius: 4px; overflow: hidden; background: #111;';
         item.innerHTML = `
           <div style="aspect-ratio: 9/14; width: 100%; position: relative;">
-            <img loading="lazy" decoding="async" src="${escapeHtml(src)}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.src='/media/characters/default.jpg'">
+            <img loading="lazy" decoding="async" src="${escapeHtml(displaySrc)}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.src='/media/characters/default.jpg'">
             <span style="position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #fff; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 3px;">#${idx + 1}</span>
           </div>
           <div style="padding: 4px; background: #fff; border-top: 1px solid #2d241e; display: flex; flex-direction: column; gap: 4px;">
@@ -789,14 +848,19 @@
 
       let char = character;
       const targetId = char?.id || characterId;
+      const api = getApi();
 
-      if (targetId && (!char || !char.imageUrls || typeof char.wasEverMarried === 'undefined')) {
+      if (targetId && (!char || !char.imageUrls || char.imageUrls.length === 0 || typeof char.wasEverMarried === 'undefined')) {
         try {
-          const res = await global.Api.get(`/characters/${encodeURIComponent(targetId)}`);
-          if (res?.data) {
-            char = { ...(char || {}), ...res.data };
+          if (api?.get) {
+            const res = await api.get(`/characters/${encodeURIComponent(targetId)}`);
+            if (res?.data) {
+              char = { ...(char || {}), ...res.data };
+            }
           }
-        } catch (_) {}
+        } catch (err) {
+          console.warn('Não foi possível obter dados completos do personagem via API:', err);
+        }
       }
 
       this._activeCharacter = char || { id: targetId, name: characterName, baseRarity: currentRarity };
@@ -910,44 +974,60 @@
 
     async submitDeletePhoto() {
       if (this._isSubmitting || !this._activeCharacter || !this._targetPhoto) return;
+      const api = getApi();
       const reason = (document.getElementById('user-photo-delete-reason')?.value || '').trim();
       if (!reason || reason.length < 5) {
-        global.Api?.showToast('Informe o motivo da exclusão com pelo menos 5 caracteres.', '⚠️');
+        api?.showToast('Informe o motivo da exclusão com pelo menos 5 caracteres.', '⚠️');
         return;
       }
 
       this._isSubmitting = true;
-      global.Api?.showLoading('Aguarde... Enviando sugestão de exclusão...', 'Registrando solicitação para a moderação...');
+      api?.showLoading('Aguarde... Enviando sugestão de exclusão...', 'Registrando solicitação para a moderação...');
       try {
-        const res = await global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, {
-          token: this._token,
-          type: 'IMAGE',
-          characterId: this._activeCharacter.id,
-          action: 'DELETE',
-          targetPhoto: this._targetPhoto,
-          reason,
-        });
+        const res = await (api?.post
+          ? api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, {
+              token: this._token,
+              type: 'IMAGE',
+              characterId: this._activeCharacter.id,
+              action: 'DELETE',
+              targetPhoto: this._targetPhoto,
+              reason,
+            })
+          : fetch(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                token: this._token,
+                type: 'IMAGE',
+                characterId: this._activeCharacter.id,
+                action: 'DELETE',
+                targetPhoto: this._targetPhoto,
+                reason,
+              }),
+            }).then(r => r.json()));
 
         if (!res?.success) {
-          global.Api?.showToast(res?.error?.message || 'Falha ao enviar sugestão de exclusão.', '❌');
+          api?.showToast(res?.error?.message || 'Falha ao enviar sugestão de exclusão.', '❌');
           return;
         }
 
         this.close();
-        global.Api?.showToast('Sugestão de exclusão de foto enviada para moderação!', '🗑️');
+        api?.showToast('Sugestão de exclusão de foto enviada para moderação!', '🗑️');
         if (this._onSuccess) this._onSuccess(res);
-      } catch (_) {
-        global.Api?.showToast('Erro de comunicação ao enviar sugestão.', '❌');
+      } catch (err) {
+        console.error('Erro ao enviar exclusão de foto:', err);
+        api?.showToast('Erro de comunicação ao enviar sugestão.', '❌');
       } finally {
-        global.Api?.hideLoading();
+        api?.hideLoading();
         this._isSubmitting = false;
       }
     },
 
     async submitPhotoCrop() {
       if (this._isSubmitting) return;
+      const api = getApi();
       if (!this._activeCharacter) {
-        global.Api?.showToast('Personagem não carregado.', '⚠️');
+        api?.showToast('Personagem não carregado.', '⚠️');
         return;
       }
 
@@ -968,7 +1048,7 @@
           if (canvas) {
             const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
             if (dataUrl && dataUrl.startsWith('data:image/')) {
-              imageBlob = global.Api?.dataURItoBlob ? global.Api.dataURItoBlob(dataUrl) : null;
+              imageBlob = api?.dataURItoBlob ? api.dataURItoBlob(dataUrl) : null;
             }
           }
         } catch (e) {
@@ -982,7 +1062,7 @@
       }
 
       if (!imageBlob) {
-        global.Api?.showToast('Por favor, selecione uma foto antes de enviar.', '⚠️');
+        api?.showToast('Por favor, selecione uma foto antes de enviar.', '⚠️');
         return;
       }
 
@@ -1018,12 +1098,14 @@
       };
 
       try {
-        const res = await (global.Api?.uploadWithProgress
-          ? global.Api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
-          : global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData));
+        const res = await (api?.uploadWithProgress
+          ? api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
+          : api?.post
+            ? api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData)
+            : fetch(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, { method: 'POST', body: formData }).then(r => r.json()));
 
         if (!res?.success) {
-          global.Api?.showToast(res?.error?.message || 'Falha ao enviar foto.', '❌');
+          api?.showToast(res?.error?.message || 'Falha ao enviar foto.', '❌');
           return;
         }
 
@@ -1031,10 +1113,11 @@
           ? 'Sugestão de substituição de foto enviada para a moderação!'
           : 'Sugestão de nova foto enviada para a moderação!';
         this.close();
-        global.Api?.showToast(msg, '🖼️');
+        api?.showToast(msg, '🖼️');
         if (this._onSuccess) this._onSuccess(res);
       } catch (err) {
-        global.Api?.showToast(err?.message || 'Erro de comunicação ao enviar imagem.', '❌');
+        console.error('Erro ao enviar foto de sugestão:', err);
+        api?.showToast(err?.message || 'Erro de comunicação ao enviar imagem.', '❌');
       } finally {
         if (progressContainer) progressContainer.classList.add('hidden');
         if (btnCrop) {
@@ -1047,6 +1130,7 @@
 
     async submitEditInfo() {
       if (this._isSubmitting || !this._activeCharacter) return;
+      const api = getApi();
 
       const suggestedName = (document.getElementById('suggest-edit-name')?.value || '').trim();
       const suggestedSeries = (document.getElementById('suggest-edit-series')?.value || '').trim();
@@ -1057,7 +1141,7 @@
       const reason = (document.getElementById('suggest-edit-reason')?.value || '').trim();
 
       if (!reason || reason.length < 5) {
-        global.Api?.showToast('Por favor, informe uma justificativa válida com pelo menos 5 caracteres.', '⚠️');
+        api?.showToast('Por favor, informe uma justificativa válida com pelo menos 5 caracteres.', '⚠️');
         return;
       }
 
@@ -1066,7 +1150,7 @@
         const normReason = reason.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
         const asksLegendary = /\b(lenda\w*|legend\w*|upgrade\w*|subir raridade|aumentar raridade|mudar raridade|virar lenda\w*|passar pra lenda\w*|bota.*lenda\w*|coloca.*lenda\w*|p[oõ]e.*lenda\w*)/i.test(normReason);
         if (asksLegendary) {
-          global.Api?.showToast('Este personagem já foi casado. A raridade máxima permitida para o mesmo é ÉPICO. Pedidos de alteração para Lendário não podem ser feitos via justificativa ou edição de dados.', '⚠️');
+          api?.showToast('Este personagem já foi casado. A raridade máxima permitida para o mesmo é ÉPICO. Pedidos de alteração para Lendário não podem ser feitos via justificativa ou edição de dados.', '⚠️');
           return;
         }
       }
@@ -1074,16 +1158,16 @@
       if (wasEverMarried && suggestedRarity === 'LEGENDARY') {
         const phraseInput = document.getElementById('suggest-legendary-phrase-input')?.value || '';
         if (!isLegendaryPhraseValid(phraseInput)) {
-          global.Api?.showToast('É obrigatório escrever a frase "Personagem casado, criar versão lendária" para prosseguir.', '⚠️');
+          api?.showToast('É obrigatório escrever a frase "Personagem casado, criar versão lendária" para prosseguir.', '⚠️');
           return;
         }
         if (!this._countdownFinished) {
-          global.Api?.showToast('Aguarde o contador de 30 segundos finalizar para poder enviar a sugestão.', '⏳');
+          api?.showToast('Aguarde o contador de 30 segundos finalizar para poder enviar a sugestão.', '⏳');
           return;
         }
         const photoFile = document.getElementById('suggest-legendary-photo-input')?.files?.[0];
         if (!photoFile) {
-          global.Api?.showToast('É obrigatório fornecer uma nova foto para criar a versão lendária de um personagem já casado.', '⚠️');
+          api?.showToast('É obrigatório fornecer uma nova foto para criar a versão lendária de um personagem já casado.', '⚠️');
           return;
         }
 
@@ -1115,7 +1199,7 @@
 
         let compressedPhoto = photoFile;
         try {
-          compressedPhoto = await (global.Api?.compressImageFile ? global.Api.compressImageFile(photoFile, 900, 1400, 0.85) : photoFile);
+          compressedPhoto = await (api?.compressImageFile ? api.compressImageFile(photoFile, 900, 1400, 0.85) : photoFile);
         } catch (_) {}
 
         const chosenGender = suggestedGender || this._activeCharacter.gender || 'FEMALE';
@@ -1134,20 +1218,23 @@
         formData.append('photo', compressedPhoto, 'legendary.jpg');
 
         try {
-          const res = await (global.Api?.uploadWithProgress
-            ? global.Api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
-            : global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData));
+          const res = await (api?.uploadWithProgress
+            ? api.uploadWithProgress(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData, onProgress)
+            : api?.post
+              ? api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData)
+              : fetch(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, { method: 'POST', body: formData }).then(r => r.json()));
 
           if (!res?.success) {
-            global.Api?.showToast(res?.error?.message || 'Falha ao enviar sugestão lendária.', '❌');
+            api?.showToast(res?.error?.message || 'Falha ao enviar sugestão lendária.', '❌');
             return;
           }
 
           this.close();
-          global.Api?.showToast('Sugestão de novo personagem na versão Lendária enviada para moderação!', '⭐');
+          api?.showToast('Sugestão de novo personagem na versão Lendária enviada para moderação!', '⭐');
           if (this._onSuccess) this._onSuccess(res);
         } catch (err) {
-          global.Api?.showToast(err?.message || 'Erro de comunicação ao enviar sugestão.', '❌');
+          console.error('Erro ao enviar sugestão lendária:', err);
+          api?.showToast(err?.message || 'Erro de comunicação ao enviar sugestão.', '❌');
         } finally {
           if (progressContainer) progressContainer.classList.add('hidden');
           this._isSubmitting = false;
@@ -1168,7 +1255,7 @@
       const descChanged = suggestedDescription !== curDesc;
 
       if (!nameChanged && !seriesChanged && !genderChanged && !rarityChanged && !tagsChanged && !descChanged) {
-        global.Api?.showToast('Nenhum campo do personagem foi modificado! Altere a descrição, nome, série ou tags diretamente nos campos acima em vez de colocar apenas na justificativa.', '⚠️');
+        api?.showToast('Nenhum campo do personagem foi modificado! Altere a descrição, nome, série ou tags diretamente nos campos acima em vez de colocar apenas na justificativa.', '⚠️');
         return;
       }
 
@@ -1178,10 +1265,10 @@
         btnEdit.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
       }
       this._isSubmitting = true;
-      global.Api?.showLoading('Aguarde... Enviando sugestão...', 'Enviando alterações para avaliação da moderação...');
+      api?.showLoading('Aguarde... Enviando sugestão...', 'Enviando alterações para avaliação da moderação...');
 
       try {
-        const res = await global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, {
+        const payload = {
           token: this._token,
           type: 'EDIT',
           characterId: this._activeCharacter.id,
@@ -1192,20 +1279,29 @@
           suggestedTags,
           suggestedDescription,
           reason,
-        });
+        };
+
+        const res = await (api?.post
+          ? api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, payload)
+          : fetch(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }).then(r => r.json()));
 
         if (!res?.success) {
-          global.Api?.showToast(res?.error?.message || 'Falha ao enviar sugestão.', '❌');
+          api?.showToast(res?.error?.message || 'Falha ao enviar sugestão.', '❌');
           return;
         }
 
         this.close();
-        global.Api?.showToast('Sugestão de alteração de dados enviada para moderação!', '💡');
+        api?.showToast('Sugestão de alteração de dados enviada para moderação!', '💡');
         if (this._onSuccess) this._onSuccess(res);
-      } catch (_) {
-        global.Api?.showToast('Erro de comunicação ao enviar sugestão.', '❌');
+      } catch (err) {
+        console.error('Erro ao enviar sugestão de dados:', err);
+        api?.showToast('Erro de comunicação ao enviar sugestão.', '❌');
       } finally {
-        global.Api?.hideLoading();
+        api?.hideLoading();
         this._isSubmitting = false;
         this._updateEditInfoSubmitButtonState();
       }

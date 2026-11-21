@@ -1647,7 +1647,7 @@ function bindCardOptionsActions(listEl, entry) {
     'delete-mythic': closeThen(() => confirmDeleteMythic(char.id, char.name)),
     'sell': closeThen(() => openSellModal(char.id, char.name, img, char.series || '')),
     'divorce': closeThen(() => openDivorceModal(char.id, char.name)),
-    'suggest': closeThen(() => openSuggestModal(char.id, char.name, char.baseRarity)),
+    'suggest': closeThen(() => openSuggestModal(char.id, char.name, char.baseRarity, char)),
     'open-covets': closeThen(() => openHaremCovetsModal(char.id, char.name, img, char.series || '')),
   });
 }
@@ -2510,7 +2510,7 @@ function renderPrivateWishlist(wishlist) {
       `;
 
       bindDataActions(card, {
-        'suggest': () => openSuggestModal(char.id, char.name, char.baseRarity),
+        'suggest': () => openSuggestModal(char.id, char.name, char.baseRarity, char),
       });
 
       const imgEl = card.querySelector('.card-img-wrapper img');
@@ -3532,7 +3532,7 @@ async function loadCatalogCharacters() {
 
       bindDataActions(card, {
         'report': () => openReportModal(char.id, char.name),
-        'suggest': () => openSuggestModal(char.id, char.name, char.baseRarity),
+        'suggest': () => openSuggestModal(char.id, char.name, char.baseRarity, char),
       });
 
       if (isMarried && spousePublicId) {

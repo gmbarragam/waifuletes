@@ -873,3 +873,12 @@ document.addEventListener('DOMContentLoaded', () => {
   Api.initTabScroller();
   Api.initScrollToTop();
 });
+
+// Exporta globalmente para compatibilidade entre scripts e componentes modulares
+if (typeof window !== 'undefined') {
+  window.Api = Api;
+}
+if (typeof globalThis !== 'undefined') {
+  globalThis.Api = Api;
+}
+
