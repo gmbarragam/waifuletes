@@ -4032,7 +4032,8 @@ async function loadUserSuggestions() {
       RARITY: '⚖️ Raridade',
       IMAGE: '🖼️ Foto',
       NEW_CHARACTER: '✨ Novo Personagem',
-      DELETE_CHARACTER: '🔞 Denúncia / Remoção'
+      DELETE_CHARACTER: '🔞 Denúncia / Remoção',
+      EDIT: '📝 Edição de Dados',
     };
 
     const statusBadges = {
@@ -4049,18 +4050,36 @@ async function loadUserSuggestions() {
       let detail = '';
       const imgUrl = s.imageUrl ? (s.imageUrl.startsWith('/media/') ? s.imageUrl : `/media/${s.imageUrl}`) : '';
       if (s.type === 'NEW_CHARACTER') {
-        detail = `<strong>${escapeHtml(s.characterName || 'Sem nome')}</strong> (${escapeHtml(s.series || 'Sem série')}) - Raridade: ${s.suggestedRarity || 'COMMON'}`;
+        detail = `<strong>${escapeHtml(s.characterName || 'Sem nome')}</strong> (${escapeHtml(s.series || 'Sem série')}) - Raridade: ${escapeHtml(s.suggestedRarity || 'COMMON')}`;
         if (imgUrl) {
           detail += ` <a href="${escapeHtml(imgUrl)}" target="_blank" rel="noopener noreferrer" style="margin-left: 6px; text-decoration: underline; font-size: 11px;">[Ver foto]</a>`;
         }
       } else if (s.character) {
         detail = `<strong>${escapeHtml(s.character.name)}</strong> (${escapeHtml(s.character.series || '')})`;
-        if (s.type === 'RARITY') detail += ` &rarr; Nova: ${s.suggestedRarity}`;
+        if (s.type === 'RARITY') detail += ` &rarr; Nova: ${escapeHtml(s.suggestedRarity || '')}`;
         if (s.type === 'IMAGE') {
-          detail += ` &rarr; Nova Foto`;
+          detail += ` &rarr; Sugestão de Foto`;
+          if (imgUrl) {
+            detail += ` <a href="${escapeHtml(imgUrl)}" target="_blank" rel="noopener noreferrer" style="margin-left: 6px; text-decoration: underline; font-size: 11px;">[Ver foto]</a>`;
+          }
+        }
+        if (s.type === 'EDIT') {
+          const changes = [];
+          if (s.suggestedName && s.suggestedName !== s.character.name) changes.push(`Nome: ${escapeHtml(s.suggestedName)}`);
+          if (s.suggestedSeries && s.suggestedSeries !== s.character.series) changes.push(`Série: ${escapeHtml(s.suggestedSeries)}`);
+          if (s.suggestedRarity && s.suggestedRarity !== s.character.baseRarity) changes.push(`Raridade: ${escapeHtml(s.suggestedRarity)}`);
+          if (s.suggestedGender && s.suggestedGender !== s.character.gender) changes.push(`Gênero: ${escapeHtml(s.suggestedGender)}`);
+          if (s.suggestedTags && s.suggestedTags.length > 0) changes.push(`Tags`);
+          if (s.suggestedDescription) changes.push(`Descrição`);
+          if (changes.length > 0) {
+            detail += ` &rarr; ${changes.join(', ')}`;
+          } else {
+            detail += ` &rarr; Atualização de dados`;
+          }
         }
       } else {
         detail = escapeHtml(s.characterName || 'Personagem');
+        if (s.type === 'EDIT') detail += ` &rarr; Atualização de dados`;
       }
 
       const notes = s.rejectionReason ? `<br><small style="color: var(--accent-red); font-weight: bold;">Motivo recusa: ${escapeHtml(s.rejectionReason)}</small>` : '';

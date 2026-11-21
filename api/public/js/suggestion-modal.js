@@ -810,7 +810,7 @@
         const legOption = editRarity.querySelector('option[value="LEGENDARY"]');
         if (legOption) {
           legOption.textContent = this._marriedGuardActive()
-            ? '⭐ Lendário (Criar Novo Personagem)'
+            ? '⭐ Lendário (Criar Novo Personagem no Catálogo)'
             : '⭐ Lendário';
         }
         editRarity.value = this._activeCharacter.baseRarity || currentRarity || 'COMMON';
@@ -911,27 +911,14 @@
     },
 
     async submitPhotoCrop() {
-      if (this._isSubmitting || !this._activeCharacter || !this._cropper) return;
+      if (this._isSubmitting || !this._activeCharacter) return;
 
+      const fileInput = document.getElementById('suggest-file-input');
+      const file = fileInput?.files?.[0];
       const btnCrop = document.getElementById('btn-submit-crop');
       const reason = (document.getElementById('suggest-photo-reason')?.value || '').trim();
-      const canvas = this._cropper.getCroppedCanvas({ width: 450, height: 700 });
-      if (!canvas) {
-        global.Api?.showToast('Falha ao processar recorte de imagem.', '❌');
-        return;
-      }
 
-      if (btnCrop) btnCrop.disabled = true;
-      this._isSubmitting = true;
-
-      canvas.toBlob(async (blob) => {
-        if (!blob) {
-          global.Api?.showToast('Falha ao processar recorte de imagem.', '❌');
-          if (btnCrop) btnCrop.disabled = false;
-          this._isSubmitting = false;
-          return;
-        }
-
+      const sendPhoto = async (imagePayload) => {
         const formData = new FormData();
         formData.append('token', this._token);
         formData.append('type', 'IMAGE');
@@ -941,9 +928,9 @@
           formData.append('targetPhoto', this._targetPhoto);
         }
         formData.append('reason', reason);
-        formData.append('image', blob, 'user_photo.png');
+        formData.append('image', imagePayload, 'user_photo.png');
 
-        global.Api?.showLoading('Aguarde... Enviando foto...', 'Enviando imagem recortada para a moderação...');
+        global.Api?.showLoading('Aguarde... Enviando foto...', 'Enviando imagem para a moderação...');
         try {
           const res = await global.Api.post(`/api/web/user/${encodeURIComponent(this._publicId)}/suggestions`, formData);
           if (!res?.success) {
@@ -964,7 +951,40 @@
           if (btnCrop) btnCrop.disabled = false;
           this._isSubmitting = false;
         }
-      }, 'image/png');
+      };
+
+      if (this._cropper) {
+        let canvas = null;
+        try {
+          canvas = this._cropper.getCroppedCanvas({ width: 450, height: 700 });
+        } catch (_) {}
+
+        if (canvas) {
+          if (btnCrop) btnCrop.disabled = true;
+          this._isSubmitting = true;
+          canvas.toBlob((blob) => {
+            if (blob) {
+              sendPhoto(blob);
+            } else if (file) {
+              sendPhoto(file);
+            } else {
+              global.Api?.showToast('Falha ao processar recorte de imagem.', '❌');
+              if (btnCrop) btnCrop.disabled = false;
+              this._isSubmitting = false;
+            }
+          }, 'image/png');
+          return;
+        }
+      }
+
+      if (file) {
+        if (btnCrop) btnCrop.disabled = true;
+        this._isSubmitting = true;
+        sendPhoto(file);
+        return;
+      }
+
+      global.Api?.showToast('Por favor, selecione uma foto antes de enviar.', '⚠️');
     },
 
     async submitEditInfo() {

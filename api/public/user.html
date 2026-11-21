@@ -187,11 +187,11 @@
             <div>
               <span style="font-weight: 800; font-size: 15px;">💡 Minhas Sugestões</span>
               <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-                Acompanhe o status das suas sugestões. Personagens aceitos entram na sua Wishlist automaticamente!
+                Acompanhe o status das suas sugestões. Para sugerir <b>fotos novas ou alterações</b> em um personagem já existente, abra o card dele no catálogo ou harém e clique em <b>Sugerir Mudança</b>!
               </p>
             </div>
-            <button class="btn-retro btn-sm btn-gold" id="btn-open-suggest-char">
-              <i class="fas fa-plus-circle"></i> Sugerir Personagem
+            <button class="btn-retro btn-sm btn-gold" id="btn-open-suggest-char" title="Sugerir cadastro de um novo personagem inédito no catálogo">
+              <i class="fas fa-plus-circle"></i> Sugerir Novo Personagem
             </button>
           </div>
 
@@ -810,10 +810,14 @@
   <div class="modal-overlay hidden" id="modal-suggest-character">
     <div class="modal-box" style="max-width: min(640px, 80vw); max-height: 80vh;">
       <div class="modal-header">
-        <span class="modal-title">✨ Sugerir Novo Personagem</span>
+        <span class="modal-title">✨ Sugerir Novo Personagem (Inédito)</span>
         <button class="modal-close" onclick="closeModal('modal-suggest-character')">&times;</button>
       </div>
       <div class="modal-body">
+        <div style="background: rgba(234, 179, 8, 0.12); border: 1.5px solid #eab308; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: #854d0e; line-height: 1.4;">
+          💡 <b>Atenção:</b> Este formulário serve exclusivamente para propor a inclusão de um <b>novo personagem que ainda não existe no jogo</b>.<br>
+          Se você deseja <b>atualizar dados</b> ou <b>sugerir fotos novas</b> para um personagem já existente, abra o card dele no Catálogo ou no seu Harém e clique no botão <b>"Sugerir Mudança"</b>!
+        </div>
         <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
           Preencha os dados do personagem para avaliação. Quando aceito pela moderação, ele será criado e entrará na sua Wishlist automaticamente!
         </p>
@@ -1829,7 +1833,7 @@
 
   <script src="/vendor/cropper.min.js"></script>
   <script src="/js/api.js?v=20261121-waifinder-roll-ui"></script>
-  <script src="/js/suggestion-modal.js?v=20261121-waifinder-roll-ui"></script>
-  <script src="/js/user.js?v=20261121-harem-nav-market"></script>
+  <script src="/js/suggestion-modal.js?v=20261121-suggestions-fix"></script>
+  <script src="/js/user.js?v=20261121-suggestions-fix"></script>
 </body>
 </html>

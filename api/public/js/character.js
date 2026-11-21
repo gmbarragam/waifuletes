@@ -66,7 +66,7 @@ const CharacterPage = {
       try {
         const lookupPublicId = this.userPublicId || 'token-session';
         const res = await Api.get(`/api/web/user/${encodeURIComponent(lookupPublicId)}?token=${encodeURIComponent(this.userToken)}`);
-        if (res?.success && res.data?.isAdmin) {
+        if (res?.success && res.data) {
           this.userSessionData = res.data;
           this.userPublicId = res.data.publicId || this.userPublicId;
           this.isAuthenticated = true;
