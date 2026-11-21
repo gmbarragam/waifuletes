@@ -1613,15 +1613,173 @@ function bindCardOptionsActions(listEl, entry) {
   });
 }
 
+let currentChoosePhotoCanUndo = false;
+let currentChoosePhotoData = null;
+let currentChoosePhotoBusy = false;
+
+function renderChoosePhotoMarriageContainer(charId, marriageData) {
+  const marriageContainer = document.getElementById('choose-photo-marriage-container');
+  const marriageBadge = document.getElementById('choose-photo-marriage-badge');
+  if (!marriageContainer) return;
+
+  if (marriageData?.isPinned) {
+    marriageBadge?.classList.remove('hidden');
+  } else {
+    marriageBadge?.classList.add('hidden');
+  }
+
+  if (marriageData?.exists) {
+    const rawUrl = marriageData.url || '';
+    const hasCacheBust = /[?&](?:t|v)=/.test(rawUrl);
+    const marriageImgUrl = rawUrl
+      ? (hasCacheBust ? rawUrl : `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}t=${Date.now()}`)
+      : '';
+    marriageContainer.innerHTML = `
+      <div style="display: flex; gap: 14px; align-items: center; flex-wrap: wrap;">
+        <img id="choose-photo-marriage-preview-img" decoding="async" src="${marriageImgUrl}" style="width: 100px; height: 100px; object-fit: cover; border-radius: 6px; border: 2.5px solid ${marriageData.isPinned ? '#ec4899' : 'var(--border-retro)'}; box-shadow: var(--shadow-retro-sm);" onerror="handleImgError(this)">
+        <div style="flex: 1; min-width: 160px;">
+          <div style="font-weight: 800; font-size: 13px; color: #ec4899;">Foto Oficial do Casal 💍</div>
+          <p style="font-size: 11px; color: var(--text-muted); margin: 3px 0 8px 0;">
+            Gerada pelas Ravenas no momento do casamento ou via comando <code>!mu-foto</code>.
+          </p>
+          <button class="btn-retro btn-sm ${marriageData.isPinned ? 'btn-pink' : 'btn-gold'}" style="font-weight: 800;" onclick="submitPinnedPhoto('marriage')">
+            ${marriageData.isPinned ? '✓ Foto Fixa Atual' : 'Fixar Foto do Casamento'}
+          </button>
+        </div>
+      </div>
+    `;
+  } else {
+    marriageContainer.innerHTML = `
+      <div style="text-align: center; padding: 14px; border: 1.5px dashed var(--border-retro); border-radius: 6px; background: var(--bg-card);">
+        <div style="font-size: 24px; margin-bottom: 4px;">💍</div>
+        <div style="font-size: 13px; font-weight: 800; margin-bottom: 4px;">Ainda não há foto de casamento gerada!</div>
+        <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+          Clique em <b>Nova foto</b> abaixo ou envie no WhatsApp para as Ravenas gerarem a foto do casal:
+        </p>
+        <button class="btn-retro btn-sm btn-pink" data-action="copy-request-command">
+          <i class="fas fa-copy"></i> Copiar ${escapeHtml(marriageData?.requestCommand || `!mu-foto ${charId}`)}
+        </button>
+      </div>
+    `;
+    bindDataActions(marriageContainer, {
+      'copy-request-command': () => copyTextToClipboard(marriageData?.requestCommand || `!mu-foto ${charId}`),
+    });
+  }
+}
+
+function updateChoosePhotoGenerateButton() {
+  const btn = document.getElementById('btn-generate-new-marriage-photo');
+  if (!btn) return;
+  btn.disabled = currentChoosePhotoBusy;
+  if (currentChoosePhotoCanUndo) {
+    btn.className = 'btn-retro btn-sm btn-danger';
+    btn.style.cssText = 'font-size: 11px; padding: 3px 9px; font-weight: 800;';
+    btn.innerHTML = '<i class="fas fa-undo"></i> Desfazer';
+    btn.title = 'Cancela a troca restaurando a foto anterior do casamento';
+  } else {
+    btn.className = 'btn-retro btn-sm btn-gold';
+    btn.style.cssText = 'font-size: 11px; padding: 3px 9px; font-weight: 800;';
+    btn.innerHTML = '<i class="fas fa-magic"></i> Nova foto';
+    btn.title = 'Gerar uma nova foto oficial de casamento com a Ravena AI (pode demorar alguns segundos)';
+  }
+}
+
+async function handleChoosePhotoGenerateOrUndo() {
+  const charId = currentChoosePhotoCharId;
+  if (!charId || currentChoosePhotoBusy) return;
+
+  currentChoosePhotoBusy = true;
+  updateChoosePhotoGenerateButton();
+
+  if (currentChoosePhotoCanUndo) {
+    Api.showLoading('🔙 Desfazendo Foto...', 'Restaurando a foto de casamento anterior...');
+    try {
+      const res = await Api.post(
+        `/api/web/user/${encodeURIComponent(userPublicId)}/harem/${encodeURIComponent(charId)}/marriage-photo/revert`,
+        { token: userSessionToken },
+        {},
+        { loading: false }
+      );
+      if (res?.success && res.data?.photoUrl) {
+        currentChoosePhotoCanUndo = false;
+        if (!currentChoosePhotoData) currentChoosePhotoData = { marriage: {} };
+        if (!currentChoosePhotoData.marriage) currentChoosePhotoData.marriage = {};
+        currentChoosePhotoData.marriage.exists = true;
+        currentChoosePhotoData.marriage.url = res.data.photoUrl;
+        renderChoosePhotoMarriageContainer(charId, currentChoosePhotoData.marriage);
+        Api.showToast('🔙 Troca cancelada! Foto anterior restaurada.', '✨');
+        if (currentChoosePhotoData.marriage.isPinned) {
+          loadUserData();
+        }
+      } else {
+        Api.showToast(res?.error?.message || 'Não foi possível desfazer a foto.', '❌');
+      }
+    } catch (_) {
+      Api.showToast('Erro de comunicação ao desfazer foto.', '❌');
+    } finally {
+      Api.hideLoading(true);
+      currentChoosePhotoBusy = false;
+      updateChoosePhotoGenerateButton();
+    }
+    return;
+  }
+
+  Api.showToast('⏳ Solicitando nova foto do casamento à Ravena AI! Pode demorar alguns segundos...', '📸');
+  Api.showLoading(
+    '🎨 Gerando Nova Foto...',
+    'A Ravena AI está criando uma nova foto de casamento. Isso pode demorar alguns segundos!'
+  );
+
+  try {
+    const res = await Api.post(
+      `/api/web/user/${encodeURIComponent(userPublicId)}/harem/${encodeURIComponent(charId)}/marriage-photo/generate`,
+      { token: userSessionToken },
+      {},
+      { loading: false }
+    );
+    if (res?.success && res.data?.photoUrl) {
+      if (!currentChoosePhotoData) currentChoosePhotoData = { marriage: {} };
+      if (!currentChoosePhotoData.marriage) currentChoosePhotoData.marriage = {};
+      currentChoosePhotoData.marriage.exists = true;
+      currentChoosePhotoData.marriage.url = res.data.photoUrl;
+      renderChoosePhotoMarriageContainer(charId, currentChoosePhotoData.marriage);
+
+      if (res.data.hasPrevious) {
+        currentChoosePhotoCanUndo = true;
+        Api.showToast('✨ Nova foto gerada! Clique em "Desfazer" se quiser voltar à anterior.', '📸');
+      } else {
+        currentChoosePhotoCanUndo = false;
+        Api.showToast('💍 Foto do casamento gerada com sucesso!', '📸');
+      }
+
+      if (currentChoosePhotoData.marriage.isPinned) {
+        loadUserData();
+      }
+    } else {
+      Api.showToast(res?.error?.message || 'Não foi possível gerar a nova foto agora.', '⚠️');
+    }
+  } catch (_) {
+    Api.showToast('Erro ao comunicar com a Ravena AI para gerar foto.', '❌');
+  } finally {
+    Api.hideLoading(true);
+    currentChoosePhotoBusy = false;
+    updateChoosePhotoGenerateButton();
+  }
+}
+
 async function openChoosePhotoModal(charId) {
   currentChoosePhotoCharId = charId;
+  currentChoosePhotoCanUndo = false;
+  currentChoosePhotoData = null;
+  currentChoosePhotoBusy = false;
+  updateChoosePhotoGenerateButton();
+
   const entry = haremEntryCache.get(charId);
   const char = entry?.character;
   const titleEl = document.getElementById('choose-photo-title');
   if (titleEl && char) titleEl.textContent = `📷 Escolher Foto • ${char.name}`;
 
   const marriageContainer = document.getElementById('choose-photo-marriage-container');
-  const marriageBadge = document.getElementById('choose-photo-marriage-badge');
   const gridEl = document.getElementById('choose-photo-grid');
 
   if (marriageContainer) marriageContainer.innerHTML = '<div style="text-align: center; padding: 12px; font-size: 12px; color: var(--text-muted);">Carregando opções...</div>';
@@ -1638,51 +1796,16 @@ async function openChoosePhotoModal(charId) {
     }
 
     const data = res.data;
+    currentChoosePhotoData = data;
 
     // Foto do casamento
-    if (data.marriage?.isPinned) {
-      marriageBadge?.classList.remove('hidden');
-    } else {
-      marriageBadge?.classList.add('hidden');
-    }
+    renderChoosePhotoMarriageContainer(charId, data.marriage);
 
-    if (marriageContainer) {
-      if (data.marriage?.exists) {
-        const marriageImgUrl = data.marriage.url ? `${data.marriage.url}${data.marriage.url.includes('?') ? '&' : '?'}t=${Date.now()}` : '';
-        marriageContainer.innerHTML = `
-          <div style="display: flex; gap: 14px; align-items: center; flex-wrap: wrap;">
-            <img loading="lazy" decoding="async" src="${marriageImgUrl}" style="width: 100px; height: 100px; object-fit: cover; border-radius: 6px; border: 2.5px solid ${data.marriage.isPinned ? '#ec4899' : 'var(--border-retro)'}; box-shadow: var(--shadow-retro-sm);" onerror="handleImgError(this)">
-            <div style="flex: 1; min-width: 160px;">
-              <div style="font-weight: 800; font-size: 13px; color: #ec4899;">Foto Oficial do Casal 💍</div>
-              <p style="font-size: 11px; color: var(--text-muted); margin: 3px 0 8px 0;">
-                Gerada pelas Ravenas no momento do casamento ou via comando <code>!mu-foto</code>.
-              </p>
-              <button class="btn-retro btn-sm ${data.marriage.isPinned ? 'btn-pink' : 'btn-gold'}" style="font-weight: 800;" onclick="submitPinnedPhoto('marriage')">
-                ${data.marriage.isPinned ? '✓ Foto Fixa Atual' : 'Fixar Foto do Casamento'}
-              </button>
-            </div>
-          </div>
-        `;
-      } else {
-        marriageContainer.innerHTML = `
-          <div style="text-align: center; padding: 14px; border: 1.5px dashed var(--border-retro); border-radius: 6px; background: var(--bg-card);">
-            <div style="font-size: 24px; margin-bottom: 4px;">💍</div>
-            <div style="font-size: 13px; font-weight: 800; margin-bottom: 4px;">Ainda não há foto de casamento gerada!</div>
-            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-              Envie no WhatsApp para as Ravenas gerarem a foto do casal:
-            </p>
-            <button class="btn-retro btn-sm btn-pink" data-action="copy-request-command">
-              <i class="fas fa-copy"></i> Copiar ${escapeHtml(data.marriage?.requestCommand || `!mu-foto ${charId}`)}
-            </button>
-          </div>
-        `;
-        bindDataActions(marriageContainer, {
-          'copy-request-command': () => copyTextToClipboard(data.marriage?.requestCommand || `!mu-foto ${charId}`),
-        });
-      }
+    // Botão Nova foto / Desfazer e Copiar !mu-foto nova
+    const btnGeneratePhoto = document.getElementById('btn-generate-new-marriage-photo');
+    if (btnGeneratePhoto) {
+      btnGeneratePhoto.onclick = () => handleChoosePhotoGenerateOrUndo();
     }
-
-    // Botão de copiar !mu-foto nova
     const btnNewPhoto = document.getElementById('btn-copy-new-photo-cmd');
     if (btnNewPhoto) {
       btnNewPhoto.onclick = () => copyTextToClipboard(data.marriage?.newPhotoCommand || `!mu-foto nova ${charId}`);

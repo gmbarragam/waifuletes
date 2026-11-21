@@ -184,6 +184,10 @@ const Waifinder = {
   publicId: '',
   userData: null,
   rollsInfo: null,
+  claimLockSeconds: 300,
+  rollHistory: [],
+  rollHistoryIndex: -1,
+  _rollCountdownTimer: null,
   activeRoll: null,
   activePointerCard: null,
   isDragging: false,
@@ -298,7 +302,13 @@ const Waifinder = {
       }
     });
 
-    document.getElementById('btn-action-wishlist')?.addEventListener('click', () => this.handleWishlist());
+    document.getElementById('btn-action-wishlist')?.addEventListener('click', () => {
+      if (this.mode === 'ROLLING') {
+        this.handleGoBackRoll();
+      } else {
+        this.handleWishlist();
+      }
+    });
     document.getElementById('btn-action-gender')?.addEventListener('click', () => this.toggleGenderFilter());
 
     // Atalhos de Teclado Desktop
@@ -314,16 +324,16 @@ const Waifinder = {
       if (this.hasOpenModal()) return;
 
       if (this.mode === 'ROLLING') {
-        // Modo Rollando: C = casar, R = roll (ignora A e D!)
+        // Modo Rollando: C = casar, R = roll, V = voltar ao roll anterior (ignora A, D e W!)
         if (key === 'r') {
           e.preventDefault();
           this.performRealRoll('left');
         } else if (key === 'c') {
           e.preventDefault();
           this.performMarry();
-        } else if (key === 'w') {
+        } else if (key === 'v') {
           e.preventDefault();
-          this.handleWishlist();
+          this.handleGoBackRoll();
         } else if (key === 'g' || key === 's') {
           e.preventDefault();
           this.toggleGenderFilter();
@@ -378,17 +388,161 @@ const Waifinder = {
     this.closeModals();
   },
 
+  getRollHistoryStorageKey() {
+    return `waifinder_roll_history_${this.publicId || 'user'}`;
+  },
+
+  pruneExpiredRollHistory() {
+    const now = Date.now();
+    const activeChar = this.activeRoll;
+    const beforeLen = this.rollHistory.length;
+
+    this.rollHistory = this.rollHistory
+      .filter((entry) => entry && entry.character && entry.character.id && Number(entry._expiresAtMs) > now)
+      .slice(-30);
+
+    if (activeChar) {
+      const idx = this.rollHistory.indexOf(activeChar);
+      this.rollHistoryIndex = idx !== -1 ? idx : this.rollHistory.length;
+    } else {
+      this.rollHistoryIndex = this.rollHistory.length;
+    }
+
+    return this.rollHistory.length !== beforeLen;
+  },
+
+  loadRollHistory() {
+    if (!this.token) {
+      this.rollHistory = [];
+      this.rollHistoryIndex = -1;
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(this.getRollHistoryStorageKey());
+      if (!raw) {
+        this.rollHistory = [];
+        this.rollHistoryIndex = 0;
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      this.rollHistory = Array.isArray(parsed) ? parsed : [];
+      if (this.pruneExpiredRollHistory()) {
+        this.saveRollHistory();
+      }
+    } catch (_) {
+      this.rollHistory = [];
+      this.rollHistoryIndex = 0;
+    }
+  },
+
+  saveRollHistory() {
+    if (!this.token) return;
+    this.pruneExpiredRollHistory();
+    try {
+      localStorage.setItem(this.getRollHistoryStorageKey(), JSON.stringify(this.rollHistory));
+    } catch (_) {}
+  },
+
+  findPreviousValidRollIndex(fromIndex = this.rollHistoryIndex) {
+    const now = Date.now();
+    const start = Math.min(fromIndex, this.rollHistory.length) - 1;
+    for (let i = start; i >= 0; i--) {
+      const entry = this.rollHistory[i];
+      if (entry && entry.character && Number(entry._expiresAtMs) > now) {
+        return i;
+      }
+    }
+    return -1;
+  },
+
+  canGoBackRoll() {
+    if (this.mode !== 'ROLLING' || this.isRolling || this.isMarrying) return false;
+    return this.findPreviousValidRollIndex() !== -1;
+  },
+
+  handleGoBackRoll() {
+    if (this.mode !== 'ROLLING' || this.isRolling || this.isMarrying) return;
+
+    const prevIdx = this.findPreviousValidRollIndex();
+    if (prevIdx === -1) {
+      WaifinderAudio.playError();
+      this.showToast('Nenhum roll anterior dentro do tempo de casamento.', '⏳');
+      this.saveRollHistory();
+      this.updateModeUI();
+      return;
+    }
+
+    WaifinderAudio.playPop();
+    this.resetFloatingStamps();
+    this.rollHistoryIndex = prevIdx;
+    this.activeRoll = this.rollHistory[prevIdx];
+    this.renderRolledCard(this.activeRoll, { isGoBack: true });
+    this.updateModeUI();
+  },
+
+  startRollCountdownTimer() {
+    this.stopRollCountdownTimer();
+    this._rollCountdownTimer = setInterval(() => {
+      if (this.mode !== 'ROLLING') {
+        this.stopRollCountdownTimer();
+        return;
+      }
+
+      const bannerEl = document.querySelector('.waifinder-roll-status-banner[data-roll-expires-at]');
+      if (bannerEl) {
+        const expMs = Number(bannerEl.getAttribute('data-roll-expires-at')) || 0;
+        const remSecs = Math.max(0, Math.ceil((expMs - Date.now()) / 1000));
+        if (remSecs > 0) {
+          const mins = Math.floor(remSecs / 60);
+          const secs = String(remSecs % 60).padStart(2, '0');
+          bannerEl.className = 'waifinder-roll-status-banner is-timer';
+          bannerEl.textContent = `⏳ Livre para casar • ${mins}:${secs}`;
+        } else {
+          bannerEl.className = 'waifinder-roll-status-banner is-expired';
+          bannerEl.textContent = '⌛ Tempo para casar expirado';
+        }
+      }
+
+      const btnLike = document.getElementById('btn-action-like');
+      if (btnLike) btnLike.disabled = !this.canMarryCurrentRoll();
+
+      const changed = this.pruneExpiredRollHistory();
+      if (changed) {
+        this.saveRollHistory();
+      }
+      const btnWishlist = document.getElementById('btn-action-wishlist');
+      if (btnWishlist && this.mode === 'ROLLING') {
+        const canGoBack = this.canGoBackRoll();
+        btnWishlist.disabled = !canGoBack;
+        btnWishlist.title = canGoBack
+          ? 'Voltar ao roll anterior (Atalho: V)'
+          : 'Nenhum roll anterior disponível dentro do tempo de casamento';
+      }
+    }, 1000);
+  },
+
+  stopRollCountdownTimer() {
+    if (this._rollCountdownTimer) {
+      clearInterval(this._rollCountdownTimer);
+      this._rollCountdownTimer = null;
+    }
+  },
+
   enterRollingMode() {
     this.mode = 'ROLLING';
     this.activeRoll = null;
     this.activePointerCard = null;
+    this.loadRollHistory();
+    this.rollHistoryIndex = this.rollHistory.length;
     this.resetFloatingStamps();
+    this.startRollCountdownTimer();
     this.updateModeUI();
     this.renderRollingReadyState();
   },
 
   enterLookingMode() {
     this.mode = 'LOOKING';
+    this.stopRollCountdownTimer();
     this.activeRoll = null;
     this.activePointerCard = null;
     this.resetFloatingStamps();
@@ -403,6 +557,7 @@ const Waifinder = {
 
   updateModeUI() {
     const modeBtn = document.getElementById('btn-waifinder-mode');
+    const btnWishlist = document.getElementById('btn-action-wishlist');
     const btnPass = document.getElementById('btn-action-pass');
     const btnLike = document.getElementById('btn-action-like');
     const hints = document.getElementById('waifinder-desktop-hints');
@@ -413,6 +568,15 @@ const Waifinder = {
         modeBtn.classList.add('mode-rollando');
         modeBtn.innerHTML = '<span class="mode-icon">💖</span> <span class="mode-text">Rollando</span>';
         modeBtn.title = 'Modo Rollando ativo! Clique para voltar ao modo Olhando.';
+      }
+      if (btnWishlist) {
+        const canGoBack = this.canGoBackRoll();
+        btnWishlist.classList.add('is-go-back');
+        btnWishlist.innerHTML = '<i class="fas fa-undo"></i> Voltar!';
+        btnWishlist.disabled = !canGoBack;
+        btnWishlist.title = canGoBack
+          ? 'Voltar ao roll anterior (Atalho: V)'
+          : 'Nenhum roll anterior disponível dentro do tempo de casamento';
       }
       if (btnPass) {
         btnPass.classList.add('is-roll-dice');
@@ -426,7 +590,7 @@ const Waifinder = {
         btnLike.disabled = !this.canMarryCurrentRoll();
       }
       if (hints) {
-        hints.innerHTML = '<kbd>R</kbd> Rolar &nbsp;•&nbsp; <kbd>C</kbd> Casar &nbsp;•&nbsp; <kbd>W</kbd> Wishlist &nbsp;•&nbsp; <kbd>G / S</kbd> Gênero';
+        hints.innerHTML = '<kbd>R</kbd> Rolar &nbsp;•&nbsp; <kbd>C</kbd> Casar &nbsp;•&nbsp; <kbd>V</kbd> Voltar &nbsp;•&nbsp; <kbd>G / S</kbd> Gênero';
       }
     } else {
       if (modeBtn) {
@@ -434,6 +598,12 @@ const Waifinder = {
         modeBtn.classList.add('mode-olhando');
         modeBtn.innerHTML = '<span class="mode-icon">👁️</span> <span class="mode-text">Olhando</span>';
         modeBtn.title = 'Modo Olhando ativo (não gasta rolls). Clique para alternar para Rollando.';
+      }
+      if (btnWishlist) {
+        btnWishlist.classList.remove('is-go-back');
+        btnWishlist.innerHTML = '<i class="fas fa-star"></i> + Wishlist';
+        btnWishlist.title = 'Adicionar à Wishlist (Atalho: W)';
+        btnWishlist.disabled = false;
       }
       if (btnPass) {
         btnPass.classList.remove('is-roll-dice');
@@ -459,7 +629,9 @@ const Waifinder = {
     if (!ch) return false;
     if (this.activeRoll.isMythic || ch.isMythic) return false;
     if (this.activeRoll.instantMarriage || this.activeRoll.marriedJustNow) return false;
-    return Boolean(this.activeRoll.available);
+    if (!this.activeRoll.available) return false;
+    if (this.activeRoll._expiresAtMs && Date.now() >= Number(this.activeRoll._expiresAtMs)) return false;
+    return true;
   },
 
   getRollNumberColor(available, max) {
@@ -475,6 +647,9 @@ const Waifinder = {
   updateRollsDisplay(rolls) {
     if (!rolls || !this.userData) return;
     this.rollsInfo = rolls;
+    if (Number(rolls.claimLockSeconds) > 0) {
+      this.claimLockSeconds = Number(rolls.claimLockSeconds);
+    }
 
     const userBar = document.getElementById('waifinder-user-bar');
     const userBadge = document.getElementById('waifinder-user-badge');
@@ -599,6 +774,9 @@ const Waifinder = {
 
           if (data.data.user.rolls) {
             this.updateRollsDisplay(data.data.user.rolls);
+          }
+          if (this.mode === 'LOOKING') {
+            this.loadRollHistory();
           }
 
           const haremLink = document.getElementById('waifinder-harem-link');
@@ -775,20 +953,45 @@ const Waifinder = {
         WaifinderAudio.playError();
         if (err.code === 'COOLDOWN_ACTIVE') {
           this.activeRoll = null;
+          this.rollHistoryIndex = this.rollHistory.length;
           this.updateModeUI();
           this.renderNoRollsState(err);
           this.showToast('Seus rolls acabaram!', '⏳');
         } else {
           this.showToast(err.message || 'Não foi possível realizar o roll.', '⚠️');
-          if (!this.activeRoll) {
+          if (this.activeRoll) {
+            this.renderRolledCard(this.activeRoll);
+          } else {
             this.renderRollingReadyState();
           }
+          this.updateModeUI();
         }
         return;
       }
 
       const rollData = data.data;
+      const lockSecs = Number(rollData.claimLockSeconds) || this.claimLockSeconds || 300;
+      this.claimLockSeconds = lockSecs;
+
+      const nowMs = Date.now();
+      rollData._rolledAtMs = nowMs;
+      rollData._claimLockSeconds = lockSecs;
+      rollData._expiresAtMs = nowMs + lockSecs * 1000;
+
+      // Mantém o histórico válido dentro do tempo real de casamento, trazendo o card que estava em tela para logo antes do novo
+      const prevVisible = this.activeRoll;
+      this.pruneExpiredRollHistory();
+      if (prevVisible && prevVisible.character?.id !== rollData.character?.id) {
+        this.rollHistory = this.rollHistory.filter((item) => item !== prevVisible);
+        if (Number(prevVisible._expiresAtMs) > nowMs) {
+          this.rollHistory.push(prevVisible);
+        }
+      }
+      this.rollHistory = this.rollHistory.filter((item) => item.character?.id !== rollData.character?.id);
+      this.rollHistory.push(rollData);
+      this.rollHistoryIndex = this.rollHistory.length - 1;
       this.activeRoll = rollData;
+      this.saveRollHistory();
 
       if (rollData.rolls) {
         this.updateRollsDisplay(rollData.rolls);
@@ -813,15 +1016,18 @@ const Waifinder = {
     } catch (err) {
       WaifinderAudio.playError();
       this.showToast('Erro de comunicação ao realizar roll.', '❌');
-      if (!this.activeRoll) {
+      if (this.activeRoll) {
+        this.renderRolledCard(this.activeRoll);
+      } else {
         this.renderRollingReadyState();
       }
+      this.updateModeUI();
     } finally {
       this.isRolling = false;
     }
   },
 
-  renderRolledCard(rollData) {
+  renderRolledCard(rollData, options = {}) {
     const deckEl = document.getElementById('waifinder-deck');
     if (!deckEl || !rollData?.character) return;
 
@@ -835,6 +1041,9 @@ const Waifinder = {
 
     deckEl.innerHTML = '';
     const cardEl = this.createCardElement(cardData, 0);
+    if (options.isGoBack) {
+      cardEl.classList.add('is-goback-anim');
+    }
     deckEl.appendChild(cardEl);
     this.bindCardGestures(cardEl);
   },
@@ -877,6 +1086,11 @@ const Waifinder = {
         if (err.code === 'CHARACTER_ALREADY_CLAIMED') {
           this.activeRoll.available = false;
           this.activeRoll.owner = err.owner || { name: 'Outro jogador' };
+          this.saveRollHistory();
+          this.renderRolledCard(this.activeRoll);
+        } else if (err.code === 'LOCK_EXPIRED') {
+          this.activeRoll._expiresAtMs = Date.now();
+          this.saveRollHistory();
           this.renderRolledCard(this.activeRoll);
         }
         this.updateModeUI();
@@ -891,6 +1105,7 @@ const Waifinder = {
       this.activeRoll.marriedJustNow = true;
       this.activeRoll.owner = { name: this.userData?.name || 'Você' };
       this.activeRoll.character.claimCount = (Number(this.activeRoll.character.claimCount) || 0) + 1;
+      this.saveRollHistory();
 
       this.renderRolledCard(this.activeRoll);
       this.updateModeUI();
@@ -916,13 +1131,16 @@ const Waifinder = {
 
   showMarrySuccessModal(marryData) {
     const body = document.getElementById('waifinder-marry-modal-body');
+    const footer = document.getElementById('waifinder-marry-modal-footer');
     const modal = document.getElementById('modal-waifinder-marry');
     if (!body || !modal || !marryData) return;
 
     const ch = marryData.character || {};
     const rarityKey = String(ch.rarity || 'COMMON').toUpperCase();
     const rarityInfo = RARITY_MAP[rarityKey] || RARITY_MAP.COMMON;
-    const imgUrl = this.formatCardImg(ch.imageUrl || (ch.imageUrls && ch.imageUrls[0]) || '', ch.id);
+    const imgUrl = this.activeRoll?.marriagePhotoUrl
+      || this.formatCardImg(ch.imageUrl || (ch.imageUrls && ch.imageUrls[0]) || '', ch.id);
+    const isMythic = Boolean(ch.isMythic || rarityKey === 'MYTHIC');
 
     const dm = marryData.dailyMarry;
     let remainingLine = '';
@@ -937,7 +1155,7 @@ const Waifinder = {
 
     body.innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
-        <img src="${Api.escapeHtml(imgUrl)}" alt="${Api.escapeHtml(ch.name)}" onerror="window.handleImgError(this)" style="width:130px;height:185px;object-fit:cover;object-position:top center;border-radius:8px;border:3px solid ${rarityInfo.color};box-shadow:3px 3px 0 #000;">
+        <img id="waifinder-marry-modal-img" src="${Api.escapeHtml(imgUrl)}" alt="${Api.escapeHtml(ch.name)}" onerror="window.handleImgError(this)" style="width:130px;height:185px;object-fit:cover;object-position:top center;border-radius:8px;border:3px solid ${rarityInfo.color};box-shadow:3px 3px 0 #000;">
         <div>
           <div style="font-size:16px;font-weight:900;color:var(--text-main);">
             💍 Parabéns, ${Api.escapeHtml(this.userData?.name || 'Jogador')}!
@@ -950,6 +1168,8 @@ const Waifinder = {
           </div>
         </div>
 
+        <div id="waifinder-marry-modal-photo-status" style="display:none;width:100%;font-size:12px;font-weight:700;padding:7px 10px;border-radius:6px;background:rgba(236,72,153,0.12);border:1.5px dashed #ec4899;color:var(--text-main);"></div>
+
         <div style="width:100%;background:var(--bg-card-subtle);border:var(--border-retro);border-radius:6px;padding:10px 12px;text-align:left;font-size:12.5px;display:flex;flex-direction:column;gap:5px;">
           <div>🔑 Chaves: <b>${marryData.keys || 1}/10</b></div>
           <div>💜 Saldo atual: <b>${Number(marryData.kakeraBalance || 0).toLocaleString('pt-BR')} Zinthos</b></div>
@@ -959,6 +1179,44 @@ const Waifinder = {
         </div>
       </div>
     `;
+
+    if (footer) {
+      const isListed = Boolean(this.activeRoll?.character?.id === ch.id && this.activeRoll?.isListed);
+      const isPhotoDone = Boolean(this.activeRoll?.character?.id === ch.id && this.activeRoll?.marriagePhotoGenerated);
+      footer.innerHTML = `
+        ${!isMythic ? `
+          <button type="button" class="btn-retro btn-sm btn-gold" id="btn-marry-modal-announce">
+            ${isListed ? '<i class="fas fa-check"></i> Anunciado!' : '📢 Anunciar'}
+          </button>
+          <button type="button" class="btn-retro btn-sm" id="btn-marry-modal-photo" style="border-color:#ec4899;color:#ec4899;font-weight:800;">
+            ${isPhotoDone ? '<i class="fas fa-check"></i> Foto Gerada!' : '📸 Foto do Casamento'}
+          </button>
+        ` : ''}
+        <button type="button" class="btn-retro btn-sm" onclick="Waifinder.closeModals()">
+          <i class="fas fa-check"></i> Fechar
+        </button>
+      `;
+
+      const btnModalAnnounce = document.getElementById('btn-marry-modal-announce');
+      if (btnModalAnnounce) {
+        btnModalAnnounce.addEventListener('click', () => {
+          this.closeModals();
+          const cardBtn = document.querySelector('.waifinder-card.card-layer-0 .btn-waifinder-announce');
+          this.handleAnnounceCard(ch, cardBtn);
+        });
+      }
+
+      const btnModalPhoto = document.getElementById('btn-marry-modal-photo');
+      if (btnModalPhoto) {
+        btnModalPhoto.addEventListener('click', () => {
+          this.handleGenerateMarriagePhoto(ch, {
+            triggerBtn: btnModalPhoto,
+            imgEl: document.getElementById('waifinder-marry-modal-img'),
+            statusEl: document.getElementById('waifinder-marry-modal-photo-status'),
+          });
+        });
+      }
+    }
 
     modal.classList.remove('hidden');
   },
@@ -1017,9 +1275,15 @@ const Waifinder = {
     const isMythic = Boolean(char.isMythic || char.baseRarity === 'MYTHIC');
     const rarity = isMythic ? RARITY_MAP.MYTHIC : (RARITY_MAP[char.baseRarity] || RARITY_MAP.COMMON);
     const rawImg = (char.imageUrls && char.imageUrls[0]) || char.imageUrl || '';
-    const imgUrl = this.formatCardImg(rawImg, char.id);
-    const profileId = char.numericId || char.id;
     const rollMeta = char._rollMeta || null;
+    const imgUrl = rollMeta?.marriagePhotoUrl || this.formatCardImg(rawImg, char.id);
+    const profileId = char.numericId || char.id;
+    const isMarried = Boolean(
+      (rollMeta && (!rollMeta.available || rollMeta.owner || rollMeta.isOwner || rollMeta.marriedJustNow)) ||
+      char.isClaimed ||
+      char.owner
+    );
+    const showWishlistBadge = Boolean(char.isWishlisted && !isMarried);
 
     let rollBannerHtml = '';
     if (rollMeta) {
@@ -1035,10 +1299,48 @@ const Waifinder = {
       } else if (!rollMeta.available && rollMeta.owner) {
         const scrap = rollMeta.kakeraValue || rollMeta.rollReward?.totalScrap || 0;
         rollBannerHtml = `<div class="waifinder-roll-status-banner is-married">💍 De ${Api.escapeHtml(rollMeta.owner.name)} • +${scrap} 💎</div>`;
+      } else if (rollMeta.available && rollMeta._expiresAtMs) {
+        const remSecs = Math.max(0, Math.ceil((Number(rollMeta._expiresAtMs) - Date.now()) / 1000));
+        if (remSecs > 0) {
+          const mins = Math.floor(remSecs / 60);
+          const secs = String(remSecs % 60).padStart(2, '0');
+          rollBannerHtml = `<div class="waifinder-roll-status-banner is-timer" data-roll-expires-at="${Number(rollMeta._expiresAtMs)}">⏳ Livre para casar • ${mins}:${secs}</div>`;
+        } else {
+          rollBannerHtml = `<div class="waifinder-roll-status-banner is-expired" data-roll-expires-at="${Number(rollMeta._expiresAtMs)}">⌛ Tempo para casar expirado</div>`;
+        }
       }
     }
 
-    const showTopLike = this.mode === 'ROLLING' && layerIndex === 0;
+    let marriageActionHtml = '';
+    if (rollMeta && isMarried && !isMythic) {
+      if (rollMeta.isOwner || rollMeta.marriedJustNow) {
+        const isListed = Boolean(rollMeta.isListed);
+        const isListBlocked = Boolean(rollMeta.isListBlocked);
+        const isPhotoDone = Boolean(rollMeta.marriagePhotoGenerated);
+        marriageActionHtml = `
+          <div class="waifinder-marriage-action-wrap">
+            <button type="button" class="btn-waifinder-sub-action btn-waifinder-announce ${isListed ? 'is-done' : (isListBlocked ? 'is-blocked' : '')}" title="${isListed ? 'Personagem já anunciado nos classificados' : (isListBlocked ? 'Personagem ou coleção bloqueada para anúncio' : 'Anunciar este personagem nos classificados')}">
+              ${isListed ? '<i class="fas fa-check"></i> Anunciado!' : (isListBlocked ? '🔒 Bloqueado p/ Anúncio' : '📢 Anunciar')}
+            </button>
+            <button type="button" class="btn-waifinder-sub-action btn-waifinder-marriage-photo ${isPhotoDone ? 'is-done' : ''}" title="Gerar Foto do Casamento com a Ravena AI (pode demorar alguns segundos)">
+              ${isPhotoDone ? '<i class="fas fa-check"></i> Foto Gerada!' : '📸 Foto do Casamento'}
+            </button>
+          </div>
+        `;
+      } else {
+        const isCoveted = Boolean(rollMeta.isCoveted);
+        marriageActionHtml = `
+          <div class="waifinder-marriage-action-wrap">
+            <button type="button" class="btn-waifinder-sub-action btn-waifinder-covet ${isCoveted ? 'is-done' : ''}" ${isCoveted ? 'disabled' : ''} title="${isCoveted ? 'Você já cobiçou este personagem' : 'Cobiçar personagem e avisar o dono'}">
+              ${isCoveted ? '<i class="fas fa-check"></i> 👀 Cobiçado' : '👀 Cobiçar'}
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    const showTopActions = this.mode === 'ROLLING' && layerIndex === 0;
+    const isInWishlist = Boolean(char.isWishlisted || rollMeta?.isWishlist);
     const isLiked = Boolean(char.isLikedToday);
 
     const card = document.createElement('div');
@@ -1052,18 +1354,32 @@ const Waifinder = {
 
         <div class="waifinder-badges-top">
           <span class="waifinder-rarity-badge" style="background:${rarity.bg};">${rarity.label}</span>
-          ${showTopLike ? `
-            <button type="button" class="btn-card-top-like ${isLiked ? 'liked' : ''}" title="${isLiked ? 'Já curtido hoje!' : 'Curtir personagem'}">
-              <i class="fas fa-heart"></i>
-            </button>
+          ${showTopActions ? `
+            <div class="waifinder-badges-top-actions">
+              ${!isMythic ? `
+                <button type="button" class="btn-card-top-wishlist ${isInWishlist ? 'wishlisted' : ''}" aria-pressed="${isInWishlist}" title="${isInWishlist ? 'Já está na sua Wishlist!' : 'Adicionar à Wishlist'}">
+                  <i class="fas fa-star"></i>
+                </button>
+              ` : ''}
+              <button type="button" class="btn-card-top-like ${isLiked ? 'liked' : ''}" title="${isLiked ? 'Já curtido hoje!' : 'Curtir personagem'}">
+                <i class="fas fa-heart"></i>
+              </button>
+            </div>
           ` : ''}
         </div>
+
+        ${showWishlistBadge ? `
+          <div class="waifinder-badges-bottom">
+            <span class="waifinder-wishlist-photo-badge" title="Este personagem está na sua Wishlist!">
+              🌟 Na sua wishlist! ✨
+            </span>
+          </div>
+        ` : ''}
       </div>
 
       <div class="waifinder-card-info">
         <div class="waifinder-char-name">
           <span>${Api.escapeHtml(char.name)}</span>
-          ${char.isWishlisted ? '<span title="Já na sua Wishlist!" style="font-size:15px;color:#eab308;">★</span>' : ''}
         </div>
         <div class="waifinder-char-series">
           <i class="fas fa-tv"></i> <span>${Api.escapeHtml(char.series || 'Origem desconhecida')}</span>
@@ -1079,47 +1395,51 @@ const Waifinder = {
           ${Api.escapeHtml(char.description || 'Nenhuma descrição cadastrada para este personagem.')}
         </div>
 
-        <div class="waifinder-card-actions-wrap waifinder-rarity-action-wrap">
-          ${isMythic ? `
-            <div class="waifinder-action-group group-rarity" style="color: #facc15; font-size: 11px; font-weight: 800; padding: 5px 9px; background: rgba(168, 85, 247, 0.25); border-radius: 4px; border: 1px solid #a855f7;">
-              🔮 Criação Mítica
-            </div>
-          ` : `
-            <!-- Grupo: Mudar Raridade -->
-            <div class="waifinder-action-group group-rarity">
-              <button type="button" class="btn-waifinder-sub-action btn-waifinder-change-rarity" title="Sugerir alteração de raridade">
-                🔄 Raridade
+        <div class="waifinder-card-footer-actions">
+          ${marriageActionHtml}
+
+          <div class="waifinder-card-actions-wrap waifinder-rarity-action-wrap">
+            ${isMythic ? `
+              <div class="waifinder-action-group group-rarity" style="color: #facc15; font-size: 11px; font-weight: 800; padding: 5px 9px; background: rgba(168, 85, 247, 0.25); border-radius: 4px; border: 1px solid #a855f7;">
+                🔮 Criação Mítica
+              </div>
+            ` : `
+              <!-- Grupo: Mudar Raridade -->
+              <div class="waifinder-action-group group-rarity">
+                <button type="button" class="btn-waifinder-sub-action btn-waifinder-change-rarity" title="Sugerir alteração de raridade">
+                  🔄 Raridade
+                </button>
+                <div class="waifinder-rarity-options hidden">
+                  <button type="button" class="btn-rarity-opt opt-common ${char.baseRarity === 'COMMON' ? 'is-current' : ''}" data-rarity="COMMON" title="Comum">Comum</button>
+                  <button type="button" class="btn-rarity-opt opt-uncommon ${char.baseRarity === 'UNCOMMON' ? 'is-current' : ''}" data-rarity="UNCOMMON" title="Incomum">Incomum</button>
+                  <button type="button" class="btn-rarity-opt opt-rare ${char.baseRarity === 'RARE' ? 'is-current' : ''}" data-rarity="RARE" title="Raro">Raro</button>
+                  <button type="button" class="btn-rarity-opt opt-epic ${char.baseRarity === 'EPIC' ? 'is-current' : ''}" data-rarity="EPIC" title="Épico">Épico</button>
+                  <button type="button" class="btn-rarity-opt opt-legendary ${char.baseRarity === 'LEGENDARY' ? 'is-current' : ''}" data-rarity="LEGENDARY" title="Lendário">Lendário</button>
+                  <button type="button" class="btn-rarity-opt opt-cancel" title="Fechar">✕</button>
+                </div>
+              </div>
+            `}
+
+            <!-- Grupo: Denunciar! -->
+            <div class="waifinder-action-group group-report">
+              <button type="button" class="btn-waifinder-sub-action btn-waifinder-report" title="Denunciar ou solicitar exclusão deste personagem">
+                🚩 Denunciar!
               </button>
-              <div class="waifinder-rarity-options hidden">
-                <button type="button" class="btn-rarity-opt opt-common ${char.baseRarity === 'COMMON' ? 'is-current' : ''}" data-rarity="COMMON" title="Comum">Comum</button>
-                <button type="button" class="btn-rarity-opt opt-uncommon ${char.baseRarity === 'UNCOMMON' ? 'is-current' : ''}" data-rarity="UNCOMMON" title="Incomum">Incomum</button>
-                <button type="button" class="btn-rarity-opt opt-rare ${char.baseRarity === 'RARE' ? 'is-current' : ''}" data-rarity="RARE" title="Raro">Raro</button>
-                <button type="button" class="btn-rarity-opt opt-epic ${char.baseRarity === 'EPIC' ? 'is-current' : ''}" data-rarity="EPIC" title="Épico">Épico</button>
-                <button type="button" class="btn-rarity-opt opt-legendary ${char.baseRarity === 'LEGENDARY' ? 'is-current' : ''}" data-rarity="LEGENDARY" title="Lendário">Lendário</button>
-                <button type="button" class="btn-rarity-opt opt-cancel" title="Fechar">✕</button>
+              <div class="waifinder-report-options hidden">
+                <button type="button" class="btn-report-opt opt-confirm-report" title="Confirmar Denúncia">
+                  <i class="fas fa-check"></i> Confirmar
+                </button>
+                <button type="button" class="btn-report-opt opt-cancel-report" title="Cancelar">
+                  <i class="fas fa-times"></i> Cancelar
+                </button>
               </div>
             </div>
-          `}
 
-          <!-- Grupo: Denunciar! -->
-          <div class="waifinder-action-group group-report">
-            <button type="button" class="btn-waifinder-sub-action btn-waifinder-report" title="Denunciar ou solicitar exclusão deste personagem">
-              🚩 Denunciar!
-            </button>
-            <div class="waifinder-report-options hidden">
-              <button type="button" class="btn-report-opt opt-confirm-report" title="Confirmar Denúncia">
-                <i class="fas fa-check"></i> Confirmar
-              </button>
-              <button type="button" class="btn-report-opt opt-cancel-report" title="Cancelar">
-                <i class="fas fa-times"></i> Cancelar
-              </button>
-            </div>
+            <!-- Botão Perfil (abre em nova aba) -->
+            <a href="/c/${encodeURIComponent(profileId)}" target="_blank" rel="noopener noreferrer" draggable="false" class="btn-waifinder-sub-action btn-waifinder-profile" title="Abrir página do personagem em nova aba">
+              👤 Perfil
+            </a>
           </div>
-
-          <!-- Botão Perfil (abre em nova aba) -->
-          <a href="/c/${encodeURIComponent(profileId)}" target="_blank" rel="noopener noreferrer" draggable="false" class="btn-waifinder-sub-action btn-waifinder-profile" title="Abrir página do personagem em nova aba">
-            👤 Perfil
-          </a>
         </div>
       </div>
     `;
@@ -1184,6 +1504,8 @@ const Waifinder = {
       if (
         e.target.closest('.waifinder-card-actions-wrap') ||
         e.target.closest('.waifinder-rarity-action-wrap') ||
+        e.target.closest('.waifinder-marriage-action-wrap') ||
+        e.target.closest('.btn-card-top-wishlist') ||
         e.target.closest('.btn-card-top-like')
       ) {
         return;
@@ -1377,6 +1699,7 @@ const Waifinder = {
           if (topLikeBtn) topLikeBtn.classList.add('liked');
           const likesStat = document.querySelector('.stat-likes-count');
           if (likesStat) likesStat.textContent = `❤️ ${this.activeRoll.character.likeCount} curtidas`;
+          this.saveRollHistory();
         }
       }
     } catch (_) {}
@@ -1389,8 +1712,8 @@ const Waifinder = {
     return this.cards[this.currentIndex] || null;
   },
 
-  async handleWishlist() {
-    const currentChar = this.getCurrentCharacter();
+  async handleWishlist(targetChar = null, opts = {}) {
+    const currentChar = targetChar || this.getCurrentCharacter();
     if (!currentChar) return;
 
     if (!this.token) {
@@ -1398,11 +1721,29 @@ const Waifinder = {
       return;
     }
 
-    const stamp = document.getElementById('waifinder-floating-stamp-wish');
-    if (stamp) {
-      stamp.style.opacity = '1';
-      setTimeout(() => { stamp.style.opacity = '0'; }, 600);
+    if (currentChar.isMythic || currentChar.baseRarity === 'MYTHIC') {
+      this.showToast('Personagens Míticos não podem ser adicionados à Wishlist.', '⚠️');
+      return;
     }
+
+    const activeRollMatches = this.mode === 'ROLLING' && this.activeRoll?.character?.id === currentChar.id;
+    const alreadyInWishlist = Boolean(currentChar.isWishlisted || (activeRollMatches && this.activeRoll?.isWishlist));
+
+    if (alreadyInWishlist) {
+      this.showToast(`${currentChar.name} já está na sua Wishlist!`, '⭐');
+      return;
+    }
+
+    if (opts.showStamp !== false && this.mode !== 'ROLLING') {
+      const stamp = document.getElementById('waifinder-floating-stamp-wish');
+      if (stamp) {
+        stamp.style.opacity = '1';
+        setTimeout(() => { stamp.style.opacity = '0'; }, 600);
+      }
+    }
+
+    const triggerBtn = opts.triggerBtn || null;
+    if (triggerBtn) triggerBtn.disabled = true;
 
     WaifinderAudio.playWishlist();
 
@@ -1416,16 +1757,62 @@ const Waifinder = {
       const data = await res.json();
 
       if (data.success) {
+        currentChar.isWishlisted = true;
+        if (activeRollMatches && this.activeRoll) {
+          this.activeRoll.isWishlist = true;
+          this.activeRoll.character.isWishlisted = true;
+          this.saveRollHistory();
+        }
+
+        const topWishBtn = triggerBtn || document.querySelector('.waifinder-card.card-layer-0 .btn-card-top-wishlist');
+        if (topWishBtn) {
+          topWishBtn.disabled = false;
+          topWishBtn.classList.add('wishlisted');
+          topWishBtn.setAttribute('aria-pressed', 'true');
+          topWishBtn.title = 'Já está na sua Wishlist!';
+        }
+
+        const activeImgWrap = document.querySelector('.waifinder-card.card-layer-0 .waifinder-card-img-wrap');
+        const activeRollMeta = this.mode === 'ROLLING' ? this.activeRoll : null;
+        const activeIsMarried = Boolean(
+          (activeRollMeta && (!activeRollMeta.available || activeRollMeta.owner || activeRollMeta.isOwner || activeRollMeta.marriedJustNow)) ||
+          currentChar.isClaimed ||
+          currentChar.owner
+        );
+        if (activeImgWrap && !activeIsMarried && !activeImgWrap.querySelector('.waifinder-badges-bottom')) {
+          const bottomBadgeWrap = document.createElement('div');
+          bottomBadgeWrap.className = 'waifinder-badges-bottom';
+          bottomBadgeWrap.innerHTML = `
+            <span class="waifinder-wishlist-photo-badge" title="Este personagem está na sua Wishlist!">
+              🌟 Na sua wishlist! ✨
+            </span>
+          `;
+          activeImgWrap.appendChild(bottomBadgeWrap);
+        }
         this.showToast(`${currentChar.name} adicionada à sua Wishlist!`, '⭐');
       } else {
+        if (triggerBtn) triggerBtn.disabled = false;
         this.showToast(data.error?.message || 'Não foi possível adicionar à wishlist.', '⚠️');
       }
     } catch (err) {
+      if (triggerBtn) triggerBtn.disabled = false;
       this.showToast('Erro ao comunicar com o servidor.', '❌');
     }
   },
 
   bindCardActionButtons(cardEl, char) {
+    const topWishBtn = cardEl.querySelector('.btn-card-top-wishlist');
+    if (topWishBtn) {
+      const stop = (e) => e.stopPropagation();
+      topWishBtn.addEventListener('pointerdown', stop);
+      topWishBtn.addEventListener('pointerup', stop);
+      topWishBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.handleWishlist(char, { showStamp: false, triggerBtn: topWishBtn });
+      });
+    }
+
     const topLikeBtn = cardEl.querySelector('.btn-card-top-like');
     if (topLikeBtn) {
       const stop = (e) => e.stopPropagation();
@@ -1436,6 +1823,47 @@ const Waifinder = {
         e.preventDefault();
         this.submitLike(char.id, true);
       });
+    }
+
+    const marriageWrap = cardEl.querySelector('.waifinder-marriage-action-wrap');
+    if (marriageWrap) {
+      const stopMarriageProp = (e) => e.stopPropagation();
+      marriageWrap.addEventListener('pointerdown', stopMarriageProp);
+      marriageWrap.addEventListener('pointermove', stopMarriageProp);
+      marriageWrap.addEventListener('pointerup', stopMarriageProp);
+      marriageWrap.addEventListener('touchstart', stopMarriageProp, { passive: true });
+      marriageWrap.addEventListener('mousedown', stopMarriageProp);
+      marriageWrap.addEventListener('click', stopMarriageProp);
+
+      const btnCovet = marriageWrap.querySelector('.btn-waifinder-covet');
+      if (btnCovet) {
+        btnCovet.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          this.handleCovetCard(char, btnCovet);
+        });
+      }
+
+      const btnAnnounce = marriageWrap.querySelector('.btn-waifinder-announce');
+      if (btnAnnounce) {
+        btnAnnounce.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          this.handleAnnounceCard(char, btnAnnounce);
+        });
+      }
+
+      const btnPhoto = marriageWrap.querySelector('.btn-waifinder-marriage-photo');
+      if (btnPhoto) {
+        btnPhoto.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          this.handleGenerateMarriagePhoto(char, {
+            triggerBtn: btnPhoto,
+            imgEl: cardEl.querySelector('.waifinder-card-img'),
+          });
+        });
+      }
     }
 
     const wrap = cardEl.querySelector('.waifinder-card-actions-wrap');
@@ -1463,6 +1891,7 @@ const Waifinder = {
 
     const toggleOtherGroups = (hide) => {
       if (btnProfile) btnProfile.classList.toggle('hidden', hide);
+      if (marriageWrap) marriageWrap.classList.toggle('hidden', hide);
     };
 
     if (btnChangeRarity && optionsRarity) {
@@ -1545,11 +1974,20 @@ const Waifinder = {
     const btnProfile = wrapEl.querySelector('.btn-waifinder-profile');
     const btnChange = wrapEl.querySelector('.btn-waifinder-change-rarity');
     const optionsWrap = wrapEl.querySelector('.waifinder-rarity-options');
+    const marriageWrap = wrapEl.closest('.waifinder-card-footer-actions')?.querySelector('.waifinder-marriage-action-wrap');
 
     const btns = wrapEl.querySelectorAll('button');
     btns.forEach((b) => (b.disabled = true));
 
     this.showToast(`Enviando sugestão para ${targetInfo.label}...`, '⏳');
+
+    const restoreActions = () => {
+      if (optionsWrap) optionsWrap.classList.add('hidden');
+      if (groupReport) groupReport.classList.remove('hidden');
+      if (btnProfile) btnProfile.classList.remove('hidden');
+      if (marriageWrap) marriageWrap.classList.remove('hidden');
+      if (btnChange) btnChange.classList.remove('hidden');
+    };
 
     try {
       const publicId = this.publicId || 'token-session';
@@ -1572,11 +2010,8 @@ const Waifinder = {
       if (data.success) {
         WaifinderAudio.playPop();
         this.showToast(`Sugestão enviada com sucesso! (${targetInfo.label}) ✨`, '💎');
-        if (optionsWrap) optionsWrap.classList.add('hidden');
-        if (groupReport) groupReport.classList.remove('hidden');
-        if (btnProfile) btnProfile.classList.remove('hidden');
+        restoreActions();
         if (btnChange) {
-          btnChange.classList.remove('hidden');
           btnChange.innerHTML = `<i class="fas fa-check" style="color:#22c55e;"></i> ${targetInfo.label}`;
           setTimeout(() => {
             btnChange.innerHTML = '🔄 Raridade';
@@ -1584,17 +2019,11 @@ const Waifinder = {
         }
       } else {
         this.showToast(data.error?.message || 'Falha ao enviar sugestão de raridade.', '⚠️');
-        if (optionsWrap) optionsWrap.classList.add('hidden');
-        if (btnChange) btnChange.classList.remove('hidden');
-        if (groupReport) groupReport.classList.remove('hidden');
-        if (btnProfile) btnProfile.classList.remove('hidden');
+        restoreActions();
       }
     } catch (err) {
       this.showToast('Erro ao comunicar com o servidor.', '❌');
-      if (optionsWrap) optionsWrap.classList.add('hidden');
-      if (btnChange) btnChange.classList.remove('hidden');
-      if (groupReport) groupReport.classList.remove('hidden');
-      if (btnProfile) btnProfile.classList.remove('hidden');
+      restoreActions();
     } finally {
       btns.forEach((b) => (b.disabled = false));
     }
@@ -1610,11 +2039,20 @@ const Waifinder = {
     const btnProfile = wrapEl.querySelector('.btn-waifinder-profile');
     const btnReport = wrapEl.querySelector('.btn-waifinder-report');
     const optionsReport = wrapEl.querySelector('.waifinder-report-options');
+    const marriageWrap = wrapEl.closest('.waifinder-card-footer-actions')?.querySelector('.waifinder-marriage-action-wrap');
 
     const btns = wrapEl.querySelectorAll('button');
     btns.forEach((b) => (b.disabled = true));
 
     this.showToast('Enviando denúncia...', '⏳');
+
+    const restoreActions = () => {
+      if (optionsReport) optionsReport.classList.add('hidden');
+      if (groupRarity) groupRarity.classList.remove('hidden');
+      if (btnProfile) btnProfile.classList.remove('hidden');
+      if (marriageWrap) marriageWrap.classList.remove('hidden');
+      if (btnReport) btnReport.classList.remove('hidden');
+    };
 
     try {
       const publicId = this.publicId || 'token-session';
@@ -1634,11 +2072,8 @@ const Waifinder = {
       if (data.success) {
         WaifinderAudio.playPop();
         this.showToast('Denúncia enviada com sucesso para a moderação! 🚩', '⚠️');
-        if (optionsReport) optionsReport.classList.add('hidden');
-        if (groupRarity) groupRarity.classList.remove('hidden');
-        if (btnProfile) btnProfile.classList.remove('hidden');
+        restoreActions();
         if (btnReport) {
-          btnReport.classList.remove('hidden');
           btnReport.innerHTML = '<i class="fas fa-check" style="color:#22c55e;"></i> Denunciado';
           setTimeout(() => {
             btnReport.innerHTML = '🚩 Denunciar!';
@@ -1646,19 +2081,213 @@ const Waifinder = {
         }
       } else {
         this.showToast(data.error?.message || 'Falha ao enviar denúncia.', '⚠️');
-        if (optionsReport) optionsReport.classList.add('hidden');
-        if (btnReport) btnReport.classList.remove('hidden');
-        if (groupRarity) groupRarity.classList.remove('hidden');
-        if (btnProfile) btnProfile.classList.remove('hidden');
+        restoreActions();
       }
     } catch (err) {
       this.showToast('Erro ao comunicar com o servidor.', '❌');
-      if (optionsReport) optionsReport.classList.add('hidden');
-      if (btnReport) btnReport.classList.remove('hidden');
-      if (groupRarity) groupRarity.classList.remove('hidden');
-      if (btnProfile) btnProfile.classList.remove('hidden');
+      restoreActions();
     } finally {
       btns.forEach((b) => (b.disabled = false));
+    }
+  },
+
+  async handleCovetCard(char, btnEl) {
+    if (!char?.id) return;
+    if (!this.token) {
+      this.showAuthPrompt('Para cobiçar personagens, conecte sua conta com a Ravena AI!');
+      return;
+    }
+    if (btnEl?.disabled) return;
+
+    const origHtml = btnEl ? btnEl.innerHTML : '👀 Cobiçar';
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+    }
+
+    try {
+      const publicId = this.publicId || 'token-session';
+      const res = await fetch(`/api/web/user/${encodeURIComponent(publicId)}/covet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: this.token,
+          characterId: char.id,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success) {
+        WaifinderAudio.playPop();
+        if (this.activeRoll && this.activeRoll.character?.id === char.id) {
+          this.activeRoll.isCoveted = true;
+          this.activeRoll.character.isWishlisted = true;
+          this.saveRollHistory();
+        }
+        if (btnEl) {
+          btnEl.classList.add('is-done');
+          btnEl.disabled = true;
+          btnEl.innerHTML = '<i class="fas fa-check"></i> 👀 Cobiçado';
+          btnEl.title = 'Você já cobiçou este personagem';
+        }
+        this.showToast(`Você cobiçou ${char.name}! O dono será notificado.`, '👀');
+      } else {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = origHtml;
+        }
+        this.showToast(data.error?.message || 'Não foi possível cobiçar este personagem.', '⚠️');
+      }
+    } catch (_) {
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.innerHTML = origHtml;
+      }
+      this.showToast('Erro ao comunicar com o servidor.', '❌');
+    }
+  },
+
+  handleAnnounceCard(char, btnEl) {
+    if (!char?.id) return;
+    if (!this.token) {
+      this.showAuthPrompt('Para anunciar personagens nos classificados, conecte sua conta!');
+      return;
+    }
+
+    if (this.activeRoll?.character?.id === char.id) {
+      if (this.activeRoll.isListed) {
+        this.showToast(`${char.name} já possui um anúncio ativo nos classificados!`, 'ℹ️');
+        return;
+      }
+      if (this.activeRoll.isListBlocked) {
+        this.showToast('Personagens bloqueados (ou em coleções bloqueadas) não podem ser anunciados nos classificados.', '🔒');
+        return;
+      }
+    }
+
+    if (!window.MarketSellModal) {
+      this.showToast('Modal de anúncio não carregado.', '❌');
+      return;
+    }
+
+    const markAnnounced = () => {
+      if (this.activeRoll && this.activeRoll.character?.id === char.id) {
+        this.activeRoll.isListed = true;
+        this.saveRollHistory();
+      }
+      if (btnEl) {
+        btnEl.classList.add('is-done');
+        btnEl.innerHTML = '<i class="fas fa-check"></i> Anunciado!';
+        btnEl.title = 'Personagem já anunciado nos classificados';
+      }
+    };
+
+    window.MarketSellModal.open({
+      character: char,
+      token: this.token,
+      publicId: this.publicId || 'token-session',
+      onSuccess: () => markAnnounced(),
+      onAlreadyListed: () => markAnnounced(),
+    });
+  },
+
+  async handleGenerateMarriagePhoto(char, opts = {}) {
+    if (!char?.id) return;
+    if (!this.token) {
+      this.showAuthPrompt('Para gerar a Foto do Casamento, conecte sua conta!');
+      return;
+    }
+
+    this._generatingPhotoIds = this._generatingPhotoIds || new Set();
+    if (this._generatingPhotoIds.has(char.id)) {
+      this.showToast('⏳ A foto já está sendo gerada! Aguarde alguns segundos...', '📸');
+      return;
+    }
+
+    this._generatingPhotoIds.add(char.id);
+    const triggerBtn = opts.triggerBtn || null;
+    const statusEl = opts.statusEl || null;
+    const origHtml = triggerBtn ? triggerBtn.innerHTML : '📸 Foto do Casamento';
+
+    if (triggerBtn) {
+      triggerBtn.disabled = true;
+      triggerBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Gerando...';
+    }
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.textContent = '⏳ Solicitando Foto do Casamento à Ravena AI... Isso pode demorar alguns segundos!';
+    }
+    this.showToast('⏳ Gerando Foto do Casamento com a Ravena AI! Pode demorar alguns segundos...', '📸');
+
+    try {
+      const publicId = this.publicId || 'token-session';
+      const res = await fetch(
+        `/api/web/user/${encodeURIComponent(publicId)}/harem/${encodeURIComponent(char.id)}/marriage-photo/generate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ token: this.token }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data?.success && data.data?.photoUrl) {
+        const photoUrl = data.data.photoUrl;
+        WaifinderAudio.playPop();
+
+        if (this.activeRoll && this.activeRoll.character?.id === char.id) {
+          this.activeRoll.marriagePhotoUrl = photoUrl;
+          this.activeRoll.marriagePhotoGenerated = true;
+          this.saveRollHistory();
+        }
+
+        if (opts.imgEl) {
+          opts.imgEl.src = photoUrl;
+        }
+        const modalImg = document.getElementById('waifinder-marry-modal-img');
+        if (modalImg && this.activeRoll?.character?.id === char.id) {
+          modalImg.src = photoUrl;
+        }
+        const activeCardImg = document.querySelector(`.waifinder-card[data-id="${CSS.escape(char.id)}"] .waifinder-card-img`);
+        if (activeCardImg) {
+          activeCardImg.src = photoUrl;
+        }
+
+        const doneHtml = '<i class="fas fa-check"></i> Foto Gerada!';
+        [triggerBtn, document.getElementById('btn-marry-modal-photo'), document.querySelector(`.waifinder-card[data-id="${CSS.escape(char.id)}"] .btn-waifinder-marriage-photo`)].forEach((b) => {
+          if (b) {
+            b.disabled = false;
+            b.classList.add('is-done');
+            b.innerHTML = doneHtml;
+          }
+        });
+
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.textContent = '✨ Foto oficial do casamento gerada e salva no seu álbum!';
+        }
+        this.showToast('💍 Foto do casamento gerada com sucesso!', '📸');
+      } else {
+        if (triggerBtn) {
+          triggerBtn.disabled = false;
+          triggerBtn.innerHTML = origHtml;
+        }
+        if (statusEl) {
+          statusEl.style.display = 'none';
+        }
+        this.showToast(data?.error?.message || 'Não foi possível gerar a foto do casamento agora.', '⚠️');
+      }
+    } catch (_) {
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.innerHTML = origHtml;
+      }
+      if (statusEl) {
+        statusEl.style.display = 'none';
+      }
+      this.showToast('Erro de comunicação ao gerar foto do casamento.', '❌');
+    } finally {
+      this._generatingPhotoIds.delete(char.id);
     }
   },
 

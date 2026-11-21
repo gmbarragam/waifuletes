@@ -305,26 +305,55 @@ body.dark-mode .waifinder-user-badge {
   z-index: 15;
 }
 
+.waifinder-badges-top-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.btn-card-top-wishlist,
 .btn-card-top-like {
   pointer-events: auto;
   width: 36px;
   height: 36px;
   border-radius: 50%;
   background: rgba(15, 10, 26, 0.72);
-  border: 2px solid rgba(255, 255, 255, 0.75);
-  color: #f43f5e;
   font-size: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-  transition: transform 0.14s ease, background 0.15s ease, color 0.15s ease;
+  transition: transform 0.14s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.btn-card-top-wishlist {
+  border: 2px solid rgba(250, 204, 21, 0.75);
+  color: #facc15;
+}
+
+.btn-card-top-like {
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  color: #f43f5e;
+}
+
+.btn-card-top-wishlist:hover,
 .btn-card-top-like:hover {
   transform: scale(1.08);
-  background: rgba(15, 10, 26, 0.9);
+  background: rgba(15, 10, 26, 0.92);
+}
+
+.btn-card-top-wishlist.wishlisted {
+  background: linear-gradient(135deg, #facc15, #eab308);
+  color: #422006;
+  border-color: #fef08a;
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.85), 0 2px 8px rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+
+.btn-card-top-wishlist.wishlisted:hover {
+  transform: none;
 }
 
 .btn-card-top-like.liked {
@@ -343,6 +372,53 @@ body.dark-mode .waifinder-user-badge {
   box-shadow: 2px 2px 0px #000;
   color: #fff;
   letter-spacing: 0.5px;
+}
+
+/* Badge Inferior da Foto: Personagem na Wishlist */
+.waifinder-badges-bottom {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  z-index: 16;
+}
+
+.waifinder-wishlist-photo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 900;
+  letter-spacing: 0.25px;
+  color: #422006;
+  background: linear-gradient(135deg, #fef08a 0%, #facc15 55%, #eab308 100%);
+  border: 2px solid #000;
+  box-shadow: 0 0 14px rgba(250, 204, 21, 0.85), 0 0 24px rgba(234, 179, 8, 0.55), 0 2px 8px rgba(0, 0, 0, 0.45);
+  animation: waifinderWishlistPulse 1.6s ease-in-out infinite;
+  white-space: nowrap;
+}
+
+@keyframes waifinderWishlistPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 12px rgba(250, 204, 21, 0.8), 0 0 22px rgba(234, 179, 8, 0.45), 0 2px 8px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 20px rgba(254, 240, 138, 1), 0 0 34px rgba(234, 179, 8, 0.9), 0 2px 10px rgba(0, 0, 0, 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waifinder-wishlist-photo-badge {
+    animation: none;
+  }
 }
 
 .waifinder-rank-badge {
@@ -475,11 +551,33 @@ body.dark-mode .waifinder-user-badge {
   border-radius: 4px;
 }
 
+/* Pilha inferior de ações do card (Cobiçar/Anunciar + Raridade/Denunciar/Perfil) */
+.waifinder-card-footer-actions {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.waifinder-marriage-action-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
 /* Container de Ações Rápidas no Card (Raridade e Denúncia) */
 .waifinder-card-actions-wrap,
 .waifinder-rarity-action-wrap {
-  margin-top: auto;
-  padding-top: 6px;
+  margin-top: 0;
+  padding-top: 0;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -487,6 +585,103 @@ body.dark-mode .waifinder-user-badge {
   width: 100%;
   flex-shrink: 0;
   z-index: 5;
+}
+
+.btn-waifinder-covet {
+  border: 1.5px solid #ec4899;
+  background: rgba(236, 72, 153, 0.14);
+  color: #db2777;
+}
+body.dark-mode .btn-waifinder-covet {
+  color: #f472b6;
+  background: rgba(236, 72, 153, 0.18);
+}
+.btn-waifinder-covet:hover:not(:disabled) {
+  background: rgba(236, 72, 153, 0.26);
+  transform: translateY(-1px);
+}
+.btn-waifinder-covet.is-done {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.16);
+  color: #15803d;
+  cursor: default;
+}
+body.dark-mode .btn-waifinder-covet.is-done {
+  color: #4ade80;
+}
+
+.btn-waifinder-announce {
+  border: 1.5px solid #ca8a04;
+  background: rgba(234, 179, 8, 0.18);
+  color: #a16207;
+}
+body.dark-mode .btn-waifinder-announce {
+  color: #fde047;
+  border-color: #eab308;
+  background: rgba(234, 179, 8, 0.2);
+}
+.btn-waifinder-announce:hover:not(:disabled) {
+  background: rgba(234, 179, 8, 0.3);
+  transform: translateY(-1px);
+}
+.btn-waifinder-announce.is-done {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.16);
+  color: #15803d;
+}
+body.dark-mode .btn-waifinder-announce.is-done {
+  color: #4ade80;
+}
+.btn-waifinder-announce.is-blocked {
+  opacity: 0.65;
+  border-style: dashed;
+}
+
+.btn-waifinder-marriage-photo {
+  border: 1.5px solid #ec4899;
+  background: rgba(236, 72, 153, 0.14);
+  color: #be185d;
+}
+body.dark-mode .btn-waifinder-marriage-photo {
+  color: #f9a8d4;
+  border-color: #ec4899;
+  background: rgba(236, 72, 153, 0.18);
+}
+.btn-waifinder-marriage-photo:hover:not(:disabled) {
+  background: rgba(236, 72, 153, 0.25);
+  transform: translateY(-1px);
+}
+.btn-waifinder-marriage-photo.is-done,
+#btn-marry-modal-photo.is-done {
+  border-color: #22c55e !important;
+  background: rgba(34, 197, 94, 0.16) !important;
+  color: #15803d !important;
+}
+body.dark-mode .btn-waifinder-marriage-photo.is-done,
+body.dark-mode #btn-marry-modal-photo.is-done {
+  color: #4ade80 !important;
+  background: rgba(34, 197, 94, 0.2) !important;
+}
+
+.waifinder-card:has(.waifinder-marriage-action-wrap) .waifinder-card-img-wrap {
+  height: 53%;
+  min-height: 200px;
+}
+
+.waifinder-card:has(.waifinder-marriage-action-wrap) .waifinder-card-info {
+  padding: 8px 12px;
+}
+
+.waifinder-card:has(.waifinder-marriage-action-wrap) .waifinder-char-name {
+  font-size: 18px;
+}
+
+.waifinder-card:has(.waifinder-marriage-action-wrap) .waifinder-char-series {
+  margin-bottom: 4px;
+}
+
+.waifinder-card:has(.waifinder-marriage-action-wrap) .waifinder-char-stats {
+  margin-bottom: 4px;
 }
 
 .waifinder-action-group {
@@ -559,6 +754,39 @@ body.dark-mode .waifinder-user-badge {
   background: rgba(236, 72, 153, 0.2);
   border-color: #ec4899;
   color: #f472b6;
+}
+
+.waifinder-roll-status-banner.is-timer {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: #22c55e;
+  color: #16a34a;
+}
+body.dark-mode .waifinder-roll-status-banner.is-timer {
+  color: #4ade80;
+}
+
+.waifinder-roll-status-banner.is-expired {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: #ef4444;
+  color: #dc2626;
+}
+body.dark-mode .waifinder-roll-status-banner.is-expired {
+  color: #f87171;
+}
+
+.waifinder-card.is-goback-anim {
+  animation: waifinderGoBackIn 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes waifinderGoBackIn {
+  from {
+    opacity: 0.35;
+    transform: translate3d(-44px, 0, 0) rotate(-3deg);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
 }
 
 .btn-waifinder-sub-action i,
@@ -804,6 +1032,18 @@ body.dark-mode .btn-wishlist-action {
   border-color: #eab308;
 }
 
+/* Botão Voltar! no modo Rollando (substitui o + Wishlist) */
+.btn-wishlist-action.is-go-back {
+  border-color: #0d9488;
+  background: #f0fdfa;
+  color: #0f766e;
+}
+body.dark-mode .btn-wishlist-action.is-go-back {
+  background: #082b29;
+  color: #5eead4;
+  border-color: #14b8a6;
+}
+
 /* Botão de Alternância de Gênero (Todos / Waifus / Husbandos) */
 .btn-gender-action {
   gap: 6px;
@@ -1003,5 +1243,15 @@ body.dark-mode .btn-like-action.is-marry-ring:disabled {
   .waifinder-header-btn {
     padding: 3px 5px;
     font-size: 10.5px;
+  }
+}
+
+@media (max-height: 700px) {
+  .waifinder-card-img-wrap {
+    height: 55%;
+    min-height: 205px;
+  }
+  .waifinder-char-desc {
+    max-height: 46px;
   }
 }

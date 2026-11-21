@@ -664,6 +664,51 @@ const Api = {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => scheduleWithin(document), 150);
     });
+  },
+
+  initScrollToTop() {
+    if (this._scrollToTopInitialized) return;
+    this._scrollToTopInitialized = true;
+
+    let btn = document.getElementById('retro-scroll-top-btn');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.id = 'retro-scroll-top-btn';
+      btn.className = 'retro-scroll-top-btn';
+      btn.setAttribute('aria-label', 'Voltar ao topo');
+      btn.title = 'Voltar ao topo';
+      btn.innerHTML = '<i class="fas fa-arrow-up" aria-hidden="true"></i>';
+      document.body.appendChild(btn);
+    }
+
+    btn.addEventListener('click', () => {
+      const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({
+        top: 0,
+        behavior: reduceMotion ? 'auto' : 'smooth',
+      });
+    });
+
+    let rafId = 0;
+    const updateVisibility = () => {
+      rafId = 0;
+      const docEl = document.documentElement;
+      const scrollTop = window.scrollY || docEl.scrollTop || 0;
+      const maxScroll = Math.max(0, docEl.scrollHeight - window.innerHeight);
+      const threshold = Math.max(360, Math.round(window.innerHeight * 0.6));
+      const shouldShow = maxScroll >= threshold && scrollTop >= threshold;
+      btn.classList.toggle('is-visible', shouldShow);
+    };
+
+    const scheduleCheck = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(updateVisibility);
+    };
+
+    window.addEventListener('scroll', scheduleCheck, { passive: true });
+    window.addEventListener('resize', scheduleCheck, { passive: true });
+    updateVisibility();
   }
 };
 
@@ -671,4 +716,5 @@ document.addEventListener('DOMContentLoaded', () => {
   Api.initTheme();
   Api.initGlobalErrorCatching();
   Api.initTabScroller();
+  Api.initScrollToTop();
 });

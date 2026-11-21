@@ -302,17 +302,47 @@ const CharacterPage = {
 
     if (isMarriedToMe) {
       // 1. Favoritar / Desfavoritar
-      const isFav = (this.userSessionData?.harem || []).some(
-        (h) => (h.character?.id || h.characterId) === this.charId && h.isFavorite
+      const myHaremEntry = (this.userSessionData?.harem || []).find(
+        (h) => (h.character?.id || h.characterId) === this.charId
       );
+      const isFav = Boolean(myHaremEntry?.isFavorite);
       const favBtn = document.createElement('button');
+      favBtn.type = 'button';
       favBtn.className = 'btn-retro btn-sm';
       favBtn.style.cssText = 'background: #ec4899; color: white; border-color: #db2777; font-weight: 800;';
       favBtn.innerHTML = `💖 ${isFav ? 'Desfavoritar' : 'Favoritar no Harém'}`;
       favBtn.onclick = () => this.toggleFavorite();
       authActionsEl.appendChild(favBtn);
 
-      // 2. Atalho para o Harém
+      // 2. Anunciar nos Classificados (mesmo espaço do Cobiçar quando o casamento é seu)
+      if (!isMythic) {
+        const isListed = Array.isArray(this.userSessionData?.listedCharacterIds) &&
+          this.userSessionData.listedCharacterIds.includes(this.charId);
+        const isListBlocked = Boolean(myHaremEntry && (myHaremEntry.isLocked || myHaremEntry.collection?.isLocked));
+
+        const sellBtn = document.createElement('button');
+        sellBtn.type = 'button';
+        sellBtn.id = 'btn-char-announce';
+        sellBtn.className = 'btn-retro btn-sm btn-gold';
+        sellBtn.style.cssText = 'font-weight: 800;';
+        if (isListed) {
+          sellBtn.disabled = true;
+          sellBtn.style.opacity = '0.75';
+          sellBtn.innerHTML = '<i class="fas fa-check"></i> Anunciada nos Classificados';
+        } else if (isListBlocked) {
+          sellBtn.style.opacity = '0.65';
+          sellBtn.innerHTML = '🔒 Anúncio Bloqueado';
+          sellBtn.onclick = () => {
+            Api.showToast('Personagens bloqueados (ou em coleções bloqueadas) não podem ser anunciados nos classificados.', '🔒');
+          };
+        } else {
+          sellBtn.innerHTML = '<i class="fas fa-bullhorn"></i> Anunciar nos Classificados';
+          sellBtn.onclick = () => this.openAnnounceModal(sellBtn);
+        }
+        authActionsEl.appendChild(sellBtn);
+      }
+
+      // 3. Atalho para o Harém
       const haremBtn = document.createElement('a');
       haremBtn.href = `/user/${encodeURIComponent(this.userPublicId)}`;
       haremBtn.className = 'btn-retro btn-sm btn-gold';
@@ -327,11 +357,20 @@ const CharacterPage = {
     } else {
       if (isClaimed) {
         // Cobiçar
+        const isCoveted = Array.isArray(this.userSessionData?.covetedCharacterIds) &&
+          this.userSessionData.covetedCharacterIds.includes(this.charId);
         const covBtn = document.createElement('button');
+        covBtn.type = 'button';
+        covBtn.id = 'btn-char-covet';
         covBtn.className = 'btn-retro btn-sm';
-        covBtn.style.cssText = 'border-color: #ec4899; color: #ec4899; font-weight: 800;';
-        covBtn.innerHTML = '<i class="fas fa-eye"></i> Cobiçar Personagem';
-        covBtn.onclick = () => this.covetCharacter();
+        covBtn.style.cssText = isCoveted
+          ? 'border-color: #22c55e; color: #16a34a; font-weight: 800;'
+          : 'border-color: #ec4899; color: #ec4899; font-weight: 800;';
+        covBtn.innerHTML = isCoveted
+          ? '<i class="fas fa-check"></i> 👀 Cobiçado'
+          : '<i class="fas fa-eye"></i> Cobiçar Personagem';
+        covBtn.disabled = isCoveted;
+        covBtn.onclick = () => this.covetCharacter(covBtn);
         authActionsEl.appendChild(covBtn);
       } else {
         // Personagem Solteiro
@@ -467,13 +506,25 @@ const CharacterPage = {
     }
   },
 
-  async covetCharacter() {
+  async covetCharacter(btnEl) {
     try {
       const res = await Api.post(`/api/web/user/${encodeURIComponent(this.userPublicId)}/covet`, {
         token: this.userToken,
         characterId: this.charId,
       });
       if (res?.success) {
+        if (!Array.isArray(this.userSessionData?.covetedCharacterIds)) {
+          if (this.userSessionData) this.userSessionData.covetedCharacterIds = [];
+        }
+        if (this.userSessionData && !this.userSessionData.covetedCharacterIds.includes(this.charId)) {
+          this.userSessionData.covetedCharacterIds.push(this.charId);
+        }
+        if (btnEl) {
+          btnEl.disabled = true;
+          btnEl.style.borderColor = '#22c55e';
+          btnEl.style.color = '#16a34a';
+          btnEl.innerHTML = '<i class="fas fa-check"></i> 👀 Cobiçado';
+        }
         Api.showToast(res.data?.message || 'Interesse registrado no harém do jogador!', '👀');
       } else {
         Api.showToast(res.error?.message || 'Falha ao cobiçar.', '❌');
@@ -481,6 +532,44 @@ const CharacterPage = {
     } catch (_) {
       Api.showToast('Erro ao registrar interesse.', '❌');
     }
+  },
+
+  openAnnounceModal(btnEl) {
+    if (!this.isAuthenticated || !this.userToken) {
+      Api.showToast('Conecte sua conta enviando !mu-adm para a Ravena para anunciar nos classificados!', '🔒');
+      return;
+    }
+    if (!this.charData || this.charData.isMythic) {
+      return;
+    }
+    if (!window.MarketSellModal) {
+      Api.showToast('Componente de anúncio não carregado.', '❌');
+      return;
+    }
+
+    const markListed = () => {
+      if (this.userSessionData) {
+        if (!Array.isArray(this.userSessionData.listedCharacterIds)) {
+          this.userSessionData.listedCharacterIds = [];
+        }
+        if (!this.userSessionData.listedCharacterIds.includes(this.charId)) {
+          this.userSessionData.listedCharacterIds.push(this.charId);
+        }
+      }
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.style.opacity = '0.75';
+        btnEl.innerHTML = '<i class="fas fa-check"></i> Anunciada nos Classificados';
+      }
+    };
+
+    window.MarketSellModal.open({
+      character: this.charData,
+      token: this.userToken,
+      publicId: this.userPublicId || 'token-session',
+      onSuccess: () => markListed(),
+      onAlreadyListed: () => markListed(),
+    });
   },
 
   openSuggestModal() {
