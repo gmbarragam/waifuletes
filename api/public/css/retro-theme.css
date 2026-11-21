@@ -755,6 +755,35 @@ body.dark-mode .waifu-card.rarity-common {
   background: linear-gradient(135deg, #ff8f1f, #f97316) !important;
 }
 
+@keyframes waifinderPulseGlow {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 14px 4px rgba(249, 115, 22, 0.85);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
+  }
+}
+
+.btn-waifinder.btn-pulse {
+  animation: waifinderPulseGlow 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+  font-weight: 800 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.btn-waifinder.btn-pulse:hover {
+  animation-play-state: paused;
+  transform: scale(1.06);
+}
+
 .user-zinthos-pill {
   display: inline-flex;
   align-items: center;
@@ -2834,6 +2863,150 @@ body.dark-mode .harem-hosting-badge.inactive-mode {
   color: #fca5a5 !important;
 }
 
+/* ========================================================
+   NAVEGAÇÃO RÁPIDA DE COLEÇÕES DO HARÉM
+   ======================================================== */
+.harem-collections-nav-badge {
+  position: relative;
+  z-index: 21;
+}
+
+.harem-collections-nav-badge.is-active,
+.harem-collections-nav-badge.active-touch {
+  background: var(--bg-retro-accent);
+  box-shadow: var(--shadow-retro);
+  transform: translateY(-1px);
+}
+
+.harem-collections-nav-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: var(--border-retro);
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.4);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  font-weight: normal;
+  line-height: 1.5;
+  text-align: left;
+  z-index: 100;
+  cursor: default;
+}
+
+.harem-collections-nav-badge.is-active .harem-collections-nav-tooltip,
+.harem-collections-nav-badge.active-touch .harem-collections-nav-tooltip {
+  display: block;
+  animation: fadeInTooltip 0.15s ease-out;
+}
+
+.harem-collections-nav-list {
+  max-height: 250px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
+
+.harem-nav-collection-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-retro-accent);
+  border: var(--border-retro);
+  border-radius: 4px;
+  color: var(--text-main);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.harem-nav-collection-item:hover {
+  background: var(--bg-card);
+  border-color: #3b82f6;
+  transform: translateX(3px);
+  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2);
+}
+
+.harem-nav-col-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harem-nav-col-count {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+@keyframes colHighlightPulse {
+  0% { outline: 3px solid #3b82f6; outline-offset: 2px; }
+  50% { outline: 3px solid #60a5fa; outline-offset: 5px; }
+  100% { outline: 3px solid transparent; outline-offset: 2px; }
+}
+
+.collection-highlight-pulse {
+  animation: colHighlightPulse 1.5s ease-out;
+}
+
+/* ========================================================
+   MEUS ANÚNCIOS (CLASSIFICADOS) - DIVISOR E DESTAQUE
+   ======================================================== */
+.waifu-card.has-pending-offers {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.35), var(--shadow-retro-sm) !important;
+}
+
+.btn-has-offers {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+  color: #000000 !important;
+  border: 2px solid #fbbf24 !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6), var(--shadow-retro-sm) !important;
+  font-weight: 800 !important;
+  animation: pulseOffersBtn 2.2s infinite ease-in-out;
+}
+
+body.dark-mode .btn-has-offers {
+  background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%) !important;
+  color: #000000 !important;
+  border-color: #fde047 !important;
+}
+
+@keyframes pulseOffersBtn {
+  0%, 100% {
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.4), var(--shadow-retro-sm);
+    border-color: #fbbf24 !important;
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(251, 191, 36, 0.8), var(--shadow-retro-sm);
+    border-color: #ffffff !important;
+  }
+}
+
+.market-listings-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .harem-hosting-tooltip {
   display: none;
   position: absolute;
@@ -2898,13 +3071,15 @@ body.dark-mode .harem-hosting-badge.inactive-mode {
 }
 
 @media (max-width: 600px) {
-  .harem-hosting-badge {
+  .harem-hosting-badge,
+  .harem-collections-nav-badge {
     font-size: 11.5px;
     padding: 5px 8px;
     max-width: 100%;
   }
 
-  .harem-hosting-tooltip {
+  .harem-hosting-tooltip,
+  .harem-collections-nav-tooltip {
     right: 0;
     width: 260px;
     max-width: calc(100vw - 32px);
@@ -3162,5 +3337,60 @@ body.dark-mode .retro-dialog-notice--success {
     opacity: 0 !important;
     pointer-events: none !important;
   }
+}
+
+/* ========================================================
+   MODAIS E POP-UPS DO WAIFINDER: CONTENÇÃO SEGURA DE BORDAS
+   ======================================================== */
+#modal-waifinder-marry,
+#modal-quick-sell,
+#modal-roll-mode-intro,
+#modal-waifinder-auth {
+  padding: 16px 3vw !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+}
+
+#modal-waifinder-marry .modal-box,
+#modal-quick-sell .modal-box,
+#modal-roll-mode-intro .modal-box,
+#modal-waifinder-auth .modal-box {
+  width: 100% !important;
+  max-width: min(440px, 94vw) !important;
+  max-height: min(85dvh, 85vh) !important;
+  margin: auto !important;
+  border: 3px solid #2d241e !important;
+  border-radius: var(--radius-retro, 12px) !important;
+  box-shadow: 4px 4px 0px #2d241e !important;
+  box-sizing: border-box !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+body.dark-mode #modal-waifinder-marry .modal-box,
+body.dark-mode #modal-quick-sell .modal-box,
+body.dark-mode #modal-roll-mode-intro .modal-box,
+body.dark-mode #modal-waifinder-auth .modal-box {
+  border: 3px solid #9333ea !important;
+  box-shadow: 4px 4px 0px #090514 !important;
+}
+
+#modal-waifinder-marry .modal-body,
+#modal-quick-sell .modal-body,
+#modal-roll-mode-intro .modal-body,
+#modal-waifinder-auth .modal-body {
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+}
+
+#modal-waifinder-marry .modal-body *,
+#modal-quick-sell .modal-body *,
+#modal-roll-mode-intro .modal-body *,
+#modal-waifinder-auth .modal-body * {
+  box-sizing: border-box !important;
+  max-width: 100% !important;
 }
 

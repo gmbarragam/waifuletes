@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Harém do Usuário • Waifuletes ✨</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/css/retro-theme.css?v=20261121-waifinder-ux">
+  <link rel="stylesheet" href="/css/retro-theme.css?v=20261121-harem-nav-market">
   <link rel="stylesheet" href="/vendor/cropper.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
@@ -61,8 +61,8 @@
         </div>
       </a>
       <div class="header-actions">
-        <a id="btn-open-waifinder" href="/waifinder" class="btn-retro btn-sm btn-waifinder" title="Modo Descoberta Waifinder">
-          <i class="fas fa-fire"></i> Waifinder
+        <a id="btn-open-waifinder" href="/waifinder" class="btn-retro btn-sm btn-waifinder btn-pulse" title="Modo Descoberta Waifinder">
+          Waifinder - Roll! 🎲
         </a>
         <button id="btn-share-public" class="btn-retro btn-sm btn-gold hidden" title="Copiar link público para amigos">
           <i class="fas fa-share-alt"></i> <span class="btn-label-long">Compartilhar!</span><span class="btn-label-short">Link</span>
@@ -265,8 +265,22 @@
 
       <!-- Aba 3: Harém -->
       <div class="tab-content hidden" id="tab-harem">
-        <!-- Barra Superior do Harém: Custo de Hospedagem (Direita Superior) -->
-        <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 8px;">
+        <!-- Barra Superior do Harém: Navegação de Coleções e Custo de Hospedagem (Direita Superior) -->
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+          <div id="harem-collections-nav-badge" class="harem-hosting-badge harem-collections-nav-badge" title="Ir para coleção...">
+            <i class="fas fa-layer-group"></i>
+            <span id="harem-collections-nav-text">Ir para coleção...</span>
+            <div id="harem-collections-nav-tooltip" class="harem-collections-nav-tooltip">
+              <div class="harem-hosting-tooltip-title">
+                <i class="fas fa-folder-open" style="color: #3b82f6;"></i>
+                <span>Minhas Coleções</span>
+              </div>
+              <div id="harem-collections-nav-list" class="harem-collections-nav-list">
+                <div style="color: var(--text-muted); font-size: 12px; font-style: italic; padding: 8px; text-align: center;">Carregando coleções...</div>
+              </div>
+            </div>
+          </div>
+
           <div id="harem-hosting-badge" class="harem-hosting-badge" title="Clique ou passe o mouse para detalhes">
             <i class="fas fa-hotel"></i>
             <span id="harem-hosting-text">Custo atual da hospedagem: 0 zinthos/dia</span>
@@ -571,8 +585,8 @@
                 <i class="fas fa-plus"></i> Novo Anúncio (via Harém)
               </button>
             </div>
-            <div id="my-listings-grid" class="waifu-grid">
-              <div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--text-muted);">
+            <div id="my-listings-grid">
+              <div style="text-align: center; padding: 20px; color: var(--text-muted); background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro);">
                 Você não possui nenhum anúncio ativo no momento.
               </div>
             </div>
@@ -673,8 +687,22 @@
 
       <!-- Aba 1: Harém Público (Padrão) -->
       <div class="tab-content public-tab-content" id="public-tab-harem">
-        <!-- Barra Superior do Harém Público: Custo de Hospedagem (Direita Superior) -->
-        <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 8px;">
+        <!-- Barra Superior do Harém Público: Navegação de Coleções e Custo de Hospedagem (Direita Superior) -->
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+          <div id="public-harem-collections-nav-badge" class="harem-hosting-badge harem-collections-nav-badge hidden" title="Ir para coleção...">
+            <i class="fas fa-layer-group"></i>
+            <span id="public-harem-collections-nav-text">Ir para coleção...</span>
+            <div id="public-harem-collections-nav-tooltip" class="harem-collections-nav-tooltip">
+              <div class="harem-hosting-tooltip-title">
+                <i class="fas fa-folder-open" style="color: #3b82f6;"></i>
+                <span>Coleções</span>
+              </div>
+              <div id="public-harem-collections-nav-list" class="harem-collections-nav-list">
+                <div style="color: var(--text-muted); font-size: 12px; font-style: italic; padding: 8px; text-align: center;">Carregando coleções...</div>
+              </div>
+            </div>
+          </div>
+
           <div id="public-harem-hosting-badge" class="harem-hosting-badge" title="Clique ou passe o mouse para detalhes">
             <i class="fas fa-hotel"></i>
             <span id="public-harem-hosting-text">Custo atual da hospedagem: 0 zinthos/dia</span>
@@ -1800,8 +1828,8 @@
   <div id="retro-toast" class="retro-toast hidden"></div>
 
   <script src="/vendor/cropper.min.js"></script>
-  <script src="/js/api.js?v=20261121-waifinder-photo"></script>
-  <script src="/js/suggestion-modal.js?v=20261121-waifinder-photo"></script>
-  <script src="/js/user.js?v=20261121-waifinder-photo"></script>
+  <script src="/js/api.js?v=20261121-waifinder-roll-ui"></script>
+  <script src="/js/suggestion-modal.js?v=20261121-waifinder-roll-ui"></script>
+  <script src="/js/user.js?v=20261121-harem-nav-market"></script>
 </body>
 </html>

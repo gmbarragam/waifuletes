@@ -251,6 +251,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setupEventListeners() {
+  // Navegação de coleções do harém (hover no desktop com debounce de 1s, toque no mobile)
+  setupHaremCollectionsNavEvents(false);
+  setupHaremCollectionsNavEvents(true);
+
   // Pausa todos os slideshows quando a aba do navegador for minimizada ou estiver em segundo plano
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -2141,6 +2145,7 @@ function renderPrivateHarem(harem) {
   const matchingFavorites = allFavorites.filter(e => matchesHaremCard(e, searchText, rarityFilter));
 
   if (favSection && favGrid) {
+    favSection.style.scrollMarginTop = '70px';
     if (hasFilter) {
       favSection.classList.remove('hidden');
       favGrid.innerHTML = '';
@@ -2165,7 +2170,8 @@ function renderPrivateHarem(harem) {
     colContainer.innerHTML = '';
     collections.forEach(col => {
       const colCard = document.createElement('div');
-      colCard.style.cssText = 'background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; box-shadow: var(--shadow-retro-sm);';
+      colCard.id = `collection-block-${col.id}`;
+      colCard.style.cssText = 'background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; box-shadow: var(--shadow-retro-sm); scroll-margin-top: 70px;';
 
       const allColChars = marriedHarem.filter(e => e.collectionId === col.id);
       const matchingColChars = allColChars.filter(e => matchesHaremCard(e, searchText, rarityFilter));
@@ -2223,7 +2229,10 @@ function renderPrivateHarem(harem) {
   // 4. Harém Geral com Paginação
   const allGeneralEntries = marriedHarem.filter(e => !e.collectionId);
   const matchingGeneralEntries = allGeneralEntries.filter(e => matchesHaremCard(e, searchText, rarityFilter));
-  if (generalTitle) generalTitle.style.display = 'block';
+  if (generalTitle) {
+    generalTitle.style.display = 'block';
+    generalTitle.style.scrollMarginTop = '70px';
+  }
 
   const totalGeneral = matchingGeneralEntries.length;
   const pageSize = haremFilterState.pageSize || 30;
@@ -2258,6 +2267,9 @@ function renderPrivateHarem(harem) {
       if (btnNext) btnNext.disabled = haremFilterState.page >= totalGeneralPages;
     }
   }
+
+  // Atualiza navegação rápida de coleções
+  updateHaremCollectionsNav(collections, marriedHarem, false);
 }
 
 async function toggleFavorite(characterId) {
@@ -2615,6 +2627,7 @@ function renderPublicHarem(harem) {
   // 2. Favoritos (em cima, logo após os míticos)
   const favorites = harem.filter(entry => entry.isFavorite && !entry.character?.isMythic).slice(0, 5);
   if (favorites.length > 0 && favoritesSection && favoritesGrid) {
+    favoritesSection.style.scrollMarginTop = '70px';
     favoritesSection.classList.remove('hidden');
     favoritesGrid.innerHTML = '';
     favorites.forEach(entry => favoritesGrid.appendChild(createPublicHaremCard(entry)));
@@ -2635,7 +2648,8 @@ function renderPublicHarem(harem) {
       if (colChars.length === 0) return;
 
       const colBox = document.createElement('div');
-      colBox.style.cssText = 'background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; box-shadow: var(--shadow-retro-sm);';
+      colBox.id = `public-collection-block-${col.id}`;
+      colBox.style.cssText = 'background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro); padding: 14px; box-shadow: var(--shadow-retro-sm); scroll-margin-top: 70px;';
       colBox.innerHTML = `
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
           <span style="font-size: 16px; font-weight: 800; color: var(--text-main);">📂 ${escapeHtml(col.name)}</span>
@@ -2656,7 +2670,10 @@ function renderPublicHarem(harem) {
   // 4. Harém Geral (demais personagens sem coleção, não favoritos e não míticos)
   const generalOthers = harem.filter(e => !e.collectionId && !e.character?.isMythic && !favorites.includes(e));
   if (generalOthers.length > 0) {
-    if (sectionTitle) sectionTitle.classList.remove('hidden');
+    if (sectionTitle) {
+      sectionTitle.style.scrollMarginTop = '70px';
+      sectionTitle.classList.remove('hidden');
+    }
     grid.innerHTML = '';
     generalOthers.forEach(entry => grid.appendChild(createPublicHaremCard(entry)));
   } else {
@@ -2667,6 +2684,9 @@ function renderPublicHarem(harem) {
       grid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 32px; font-weight: bold;">Este usuário ainda não possui personagens no harém.</div>';
     }
   }
+
+  // Atualiza navegação de coleções do harém público
+  updateHaremCollectionsNav(colWithChars, harem, true);
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -4938,6 +4958,59 @@ function loadMarketTab() {
   loadMySentOffers();
 }
 
+function createMyListingCard(listing) {
+  const char = listing.character;
+  const rarity = RARITY_CONFIG[char.baseRarity] || RARITY_CONFIG.COMMON;
+  const pendingOffersCount = (listing.offers || []).length;
+  const hasOffers = pendingOffersCount > 0;
+
+  const card = document.createElement('div');
+  card.className = `waifu-card rarity-${(char.baseRarity || 'COMMON').toLowerCase()}${hasOffers ? ' has-pending-offers' : ''}`;
+  card.style.borderColor = hasOffers ? '#f59e0b' : ((char.baseRarity || 'COMMON') === 'COMMON' ? '#000000' : rarity.color);
+
+  const offersBtnClass = hasOffers ? 'btn-has-offers' : '';
+  const offersBtnText = hasOffers
+    ? `<i class="fas fa-bell"></i> <strong>Ver Ofertas (${pendingOffersCount})</strong>`
+    : `<i class="fas fa-envelope-open"></i> Ver Ofertas (0)`;
+
+  const keys = listing.keys || char.keys || 1;
+  const isSoulmate = Boolean(listing.isSoulmate || char.isSoulmate || keys >= 10);
+  const keysBadgeHtml = isSoulmate
+    ? `<div class="badge-keys" style="background: #ec4899; color: white; border-color: #f472b6;" title="💖 Soulmate (${keys} chaves)"><span>💖</span> <span>${keys}</span></div>`
+    : `<div class="badge-keys" title="🔑 ${keys} chave(s)"><span>🔑</span> <span>${keys}</span></div>`;
+
+  card.innerHTML = `
+    <div class="card-img-wrapper">
+      <img loading="lazy" decoding="async" src="${getCharImg(char)}" alt="${escapeHtml(char.name)}" onerror="handleImgError(this)">
+      <div class="badge-rarity" style="border-color: ${rarity.color}; color: ${rarity.color};">
+        ${rarity.emoji} ${rarity.label}
+      </div>
+      ${keysBadgeHtml}
+      ${hasOffers ? `<div class="badge-married" style="background: #f59e0b; color: black; font-weight: 800; top: 8px; left: 8px; box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);">${pendingOffersCount} 🫰</div>` : ''}
+    </div>
+    <div class="card-info">
+      <div class="card-name">${escapeHtml(char.name)}</div>
+      <div class="card-series">${escapeHtml(char.series || 'Sem série')}</div>
+      <div style="background: var(--bg-retro-accent); padding: 6px 8px; border-radius: 4px; font-size: 12px; margin: 6px 0; border: var(--border-retro);">
+        <strong style="color: #f59e0b;"><i class="fas fa-search"></i> Procura:</strong> ${escapeHtml(listing.interest)}
+      </div>
+      <div class="card-actions" style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
+        <button class="btn-retro btn-sm ${offersBtnClass}" style="width: 100%;" data-action="view-offers">
+          ${offersBtnText}
+        </button>
+        <button class="btn-retro btn-sm btn-danger" style="width: 100%;" data-action="cancel-listing">
+          <i class="fas fa-times-circle"></i> Cancelar Anúncio
+        </button>
+      </div>
+    </div>
+  `;
+  bindDataActions(card, {
+    'view-offers': () => openViewOffersModal(listing.id, char.name),
+    'cancel-listing': (event, el) => cancelMyListing(listing.id, el),
+  });
+  return card;
+}
+
 async function loadMyListings() {
   const grid = document.getElementById('my-listings-grid');
   if (!grid) return;
@@ -4948,66 +5021,59 @@ async function loadMyListings() {
     const res = await Api.get(`/api/web/user/${encodeURIComponent(userPublicId)}/market/my-listings?token=${encodeURIComponent(userSessionToken)}`);
     if (!res.success || !Array.isArray(res.data) || res.data.length === 0) {
       if (countBadge) countBadge.textContent = '0';
-      grid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--text-muted);">Você não possui nenhum anúncio ativo no momento. Vá ao seu Harém e clique em "Vender" para anunciar!</div>';
+      grid.innerHTML = '<div style="text-align: center; padding: 24px; color: var(--text-muted); background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro);">Você não possui nenhum anúncio ativo no momento. Vá ao seu Harém e clique em "Vender" para anunciar!</div>';
       return;
     }
 
     if (countBadge) countBadge.textContent = res.data.length;
-    grid.innerHTML = '';
-    res.data.forEach(listing => {
-      const char = listing.character;
-      const rarity = RARITY_CONFIG[char.baseRarity] || RARITY_CONFIG.COMMON;
-      const pendingOffersCount = (listing.offers || []).length;
 
-      const card = document.createElement('div');
-      card.className = `waifu-card rarity-${(char.baseRarity || 'COMMON').toLowerCase()}`;
-      card.style.borderColor = (char.baseRarity || 'COMMON') === 'COMMON' ? '#000000' : rarity.color;
+    const withOffers = res.data.filter(l => (l.offers || []).length > 0);
+    const withoutOffers = res.data.filter(l => (l.offers || []).length === 0);
 
-      const hasOffers = pendingOffersCount > 0;
-      const offersBtnClass = hasOffers ? 'btn-gold' : '';
-      const offersBtnText = hasOffers
-        ? `<i class="fas fa-bell"></i> <strong>Ver Ofertas (${pendingOffersCount})</strong>`
-        : `<i class="fas fa-envelope-open"></i> Ver Ofertas (0)`;
-
-      const keys = listing.keys || char.keys || 1;
-      const isSoulmate = Boolean(listing.isSoulmate || char.isSoulmate || keys >= 10);
-      const keysBadgeHtml = isSoulmate
-        ? `<div class="badge-keys" style="background: #ec4899; color: white; border-color: #f472b6;" title="💖 Soulmate (${keys} chaves)"><span>💖</span> <span>${keys}</span></div>`
-        : `<div class="badge-keys" title="🔑 ${keys} chave(s)"><span>🔑</span> <span>${keys}</span></div>`;
-
-      card.innerHTML = `
-        <div class="card-img-wrapper">
-          <img loading="lazy" decoding="async" src="${getCharImg(char)}" alt="${escapeHtml(char.name)}" onerror="handleImgError(this)">
-          <div class="badge-rarity" style="border-color: ${rarity.color}; color: ${rarity.color};">
-            ${rarity.emoji} ${rarity.label}
-          </div>
-          ${keysBadgeHtml}
-          ${hasOffers ? `<div class="badge-married" style="background: #f59e0b; color: black; font-weight: 800; top: 8px; left: 8px;">${pendingOffersCount} 🫰</div>` : ''}
+    grid.innerHTML = `
+      <!-- Seção: Com ofertas -->
+      <div id="my-listings-with-offers-section" style="margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+          <span style="font-weight: 800; font-size: 15px; color: #f59e0b; display: inline-flex; align-items: center; gap: 6px;">
+            <i class="fas fa-bell"></i> Com ofertas (${withOffers.length}):
+          </span>
+          ${withOffers.length > 0 ? '<span class="badge-tag" style="background: #f59e0b; color: #000; font-weight: 800;">Aguardando sua decisão</span>' : ''}
         </div>
-        <div class="card-info">
-          <div class="card-name">${escapeHtml(char.name)}</div>
-          <div class="card-series">${escapeHtml(char.series || 'Sem série')}</div>
-          <div style="background: var(--bg-retro-accent); padding: 6px 8px; border-radius: 4px; font-size: 12px; margin: 6px 0; border: var(--border-retro);">
-            <strong style="color: #f59e0b;"><i class="fas fa-search"></i> Procura:</strong> ${escapeHtml(listing.interest)}
-          </div>
-          <div class="card-actions" style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
-            <button class="btn-retro btn-sm ${offersBtnClass}" style="width: 100%;" data-action="view-offers">
-              ${offersBtnText}
-            </button>
-            <button class="btn-retro btn-sm btn-danger" style="width: 100%;" data-action="cancel-listing">
-              <i class="fas fa-times-circle"></i> Cancelar Anúncio
-            </button>
-          </div>
+        <div id="my-listings-with-offers-grid" class="waifu-grid"></div>
+      </div>
+
+      <!-- Divisor Horizontal -->
+      <div class="market-listings-divider" style="margin: 28px 0 20px 0;">
+        <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
+          <span style="font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); white-space: nowrap;">
+            <i class="fas fa-bullhorn"></i> Sem ofertas (${withoutOffers.length}):
+          </span>
+          <div style="flex: 1; height: 2px; background: var(--border-retro); opacity: 0.6;"></div>
         </div>
-      `;
-      bindDataActions(card, {
-        'view-offers': () => openViewOffersModal(listing.id, char.name),
-        'cancel-listing': (event, el) => cancelMyListing(listing.id, el),
-      });
-      grid.appendChild(card);
-    });
+      </div>
+
+      <!-- Seção: Sem ofertas -->
+      <div id="my-listings-without-offers-section">
+        <div id="my-listings-without-offers-grid" class="waifu-grid"></div>
+      </div>
+    `;
+
+    const withOffersGrid = document.getElementById('my-listings-with-offers-grid');
+    const withoutOffersGrid = document.getElementById('my-listings-without-offers-grid');
+
+    if (withOffers.length > 0) {
+      withOffers.forEach(listing => withOffersGrid.appendChild(createMyListingCard(listing)));
+    } else {
+      withOffersGrid.innerHTML = '<div style="grid-column: 1 / -1; padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px; font-style: italic; background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro);">Nenhum anúncio com ofertas pendentes no momento.</div>';
+    }
+
+    if (withoutOffers.length > 0) {
+      withoutOffers.forEach(listing => withoutOffersGrid.appendChild(createMyListingCard(listing)));
+    } else {
+      withoutOffersGrid.innerHTML = '<div style="grid-column: 1 / -1; padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px; font-style: italic; background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro);">Todos os seus anúncios possuem ofertas pendentes! ✨</div>';
+    }
   } catch (err) {
-    grid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--accent-red);">Erro ao carregar seus anúncios.</div>';
+    grid.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--accent-red); background: var(--bg-card); border: var(--border-retro); border-radius: var(--radius-retro);">Erro ao carregar seus anúncios.</div>';
   }
 }
 
@@ -6392,16 +6458,23 @@ async function loadHaremCovetsTable(characterId) {
       if (covet.status === 'IGNORED') statusHtml = '<span class="badge-tag" style="background: #64748b; color: #fff;">Ignorado</span>';
 
       const isIgnored = covet.status === 'IGNORED';
+      const profileBtn = covet.userPublicId
+        ? `<a href="/user/${encodeURIComponent(covet.userPublicId)}" target="_blank" class="btn-retro btn-sm btn-gold" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px; margin-right:4px; font-weight:800;" title="Ver perfil de ${escapeHtml(covet.userName)}"><i class="fas fa-user"></i> Ver Perfil</a>`
+        : '';
       const actionBtn = !isIgnored
         ? `<button class="btn-retro btn-sm btn-danger" onclick="ignoreHaremCovet('${characterId}', '${covet.id}')"><i class="fas fa-eye-slash"></i> Ignorar</button>`
         : '<span style="color: var(--text-muted); font-size: 11px;">Ignorado</span>';
 
+      const userNameHtml = covet.userPublicId
+        ? `<a href="/user/${encodeURIComponent(covet.userPublicId)}" target="_blank" style="color: inherit; text-decoration: underline; font-weight: 800;" title="Ver perfil de ${escapeHtml(covet.userName)}">${escapeHtml(covet.userName)}</a>`
+        : `<strong>${escapeHtml(covet.userName)}</strong>`;
+
       return `
         <tr>
-          <td><strong>${escapeHtml(covet.userName)}</strong></td>
+          <td>${userNameHtml}</td>
           <td style="font-size: 12px; color: var(--text-muted);">${date}</td>
           <td>${statusHtml}</td>
-          <td style="text-align: right;">${actionBtn}</td>
+          <td style="text-align: right; white-space: nowrap;">${profileBtn}${actionBtn}</td>
         </tr>
       `;
     }).join('');
@@ -7337,6 +7410,144 @@ document.addEventListener('click', (e) => {
     });
   }
 });
+
+/**
+ * Renderiza os itens da lista de navegação rápida de coleções do harém
+ */
+function updateHaremCollectionsNav(collections, haremEntries, isPublic = false) {
+  const prefix = isPublic ? 'public-' : '';
+  const badge = document.getElementById(`${prefix}harem-collections-nav-badge`);
+  const listEl = document.getElementById(`${prefix}harem-collections-nav-list`);
+  if (!badge || !listEl) return;
+
+  const validCollections = Array.isArray(collections) ? collections : [];
+  if (isPublic && validCollections.length === 0) {
+    badge.classList.add('hidden');
+    return;
+  }
+  if (isPublic) {
+    badge.classList.remove('hidden');
+  }
+
+  if (validCollections.length === 0) {
+    listEl.innerHTML = `
+      <div style="color: var(--text-muted); font-size: 12px; font-style: italic; padding: 8px; text-align: center;">
+        Nenhuma coleção criada ainda.
+      </div>
+    `;
+    return;
+  }
+
+  const allEntries = Array.isArray(haremEntries) ? haremEntries : [];
+  const favCount = allEntries.filter(e => e.isFavorite && !e.character?.isMythic).length;
+  const generalCount = allEntries.filter(e => !e.collectionId && !e.character?.isMythic).length;
+
+  let itemsHtml = '';
+
+  // Atalho para Favoritas se houver
+  if (favCount > 0) {
+    const favTarget = isPublic ? 'public-favorites-section' : 'private-favorites-section';
+    itemsHtml += `
+      <div class="harem-nav-collection-item" data-col-target="${favTarget}">
+        <span class="harem-nav-col-name"><i class="fas fa-star" style="color: #facc15;"></i> ⭐ Favoritas</span>
+        <span class="harem-nav-col-count badge-tag" style="background: #f59e0b; color: #000;">${favCount}</span>
+      </div>
+    `;
+  }
+
+  // Coleções do usuário
+  validCollections.forEach(col => {
+    const colCount = allEntries.filter(e => e.collectionId === col.id && !e.character?.isMythic).length;
+    const targetId = isPublic ? `public-collection-block-${col.id}` : `collection-block-${col.id}`;
+    itemsHtml += `
+      <div class="harem-nav-collection-item" data-col-target="${targetId}">
+        <span class="harem-nav-col-name"><i class="fas fa-folder"></i> ${escapeHtml(col.name)}</span>
+        <span class="harem-nav-col-count badge-tag" style="background: #3b82f6; color: #fff;">${colCount}</span>
+      </div>
+    `;
+  });
+
+  // Atalho para Harém Geral
+  const generalTarget = isPublic ? 'public-harem-section-title' : 'private-harem-general-title';
+  itemsHtml += `
+    <div class="harem-nav-collection-item" data-col-target="${generalTarget}">
+      <span class="harem-nav-col-name"><i class="fas fa-ring"></i> Harém Geral</span>
+      <span class="harem-nav-col-count badge-tag">${generalCount}</span>
+    </div>
+  `;
+
+  listEl.innerHTML = itemsHtml;
+
+  // Adiciona evento de clique em cada item
+  listEl.querySelectorAll('.harem-nav-collection-item').forEach(item => {
+    item.onclick = (e) => {
+      e.stopPropagation();
+      const targetId = item.dataset.colTarget;
+      badge.classList.remove('is-active', 'active-touch');
+      const targetEl = document.getElementById(targetId);
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        targetEl.classList.add('collection-highlight-pulse');
+        setTimeout(() => targetEl.classList.remove('collection-highlight-pulse'), 1500);
+      }
+    };
+  });
+}
+
+/**
+ * Configura listeners de hover com debounce (1s) e clique mobile para o botão de navegação de coleções
+ */
+function setupHaremCollectionsNavEvents(isPublic = false) {
+  const prefix = isPublic ? 'public-' : '';
+  const badge = document.getElementById(`${prefix}harem-collections-nav-badge`);
+  const tooltip = document.getElementById(`${prefix}harem-collections-nav-tooltip`);
+  if (!badge || !tooltip) return;
+
+  let hideTimer = null;
+
+  const showNav = () => {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    badge.classList.add('is-active');
+  };
+
+  const scheduleHide = () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      badge.classList.remove('is-active');
+      hideTimer = null;
+    }, 1000);
+  };
+
+  // Hover desktop no botão e no tooltip
+  badge.addEventListener('mouseenter', showNav);
+  badge.addEventListener('mouseleave', scheduleHide);
+  tooltip.addEventListener('mouseenter', showNav);
+  tooltip.addEventListener('mouseleave', scheduleHide);
+
+  // Toque / clique no mobile
+  badge.addEventListener('click', (e) => {
+    if (e.target.closest('.harem-collections-nav-tooltip')) return;
+    const isActive = badge.classList.contains('active-touch') || badge.classList.contains('is-active');
+    if (isActive) {
+      badge.classList.remove('active-touch', 'is-active');
+      if (hideTimer) clearTimeout(hideTimer);
+    } else {
+      showNav();
+      badge.classList.add('active-touch');
+    }
+  });
+
+  // Fecha ao clicar fora
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest(`#${prefix}harem-collections-nav-badge`)) {
+      badge.classList.remove('active-touch', 'is-active');
+      if (hideTimer) clearTimeout(hideTimer);
+    }
+  });
+}
 
 
 
