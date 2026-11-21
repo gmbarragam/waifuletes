@@ -667,8 +667,12 @@ const Waifinder = {
       tooltip += ` (${baseAvail} normais/donate + ${farmRolls} fazenda + ${farmTickets} tickets)`;
     }
 
+    const pct = Math.min(100, Math.max(0, Math.round((avail / maxR) * 100)));
+    userBadge.style.setProperty('--roll-progress', `${pct}%`);
+
     userBadge.innerHTML = `
-      <span style="display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+      <div class="waifinder-user-progress-bar" style="width: ${pct}%;"></div>
+      <span class="waifinder-user-name-wrap">
         <i class="fas fa-user-circle"></i>
         <span>${Api.escapeHtml(this.userData.name)}</span>
       </span>
@@ -919,12 +923,18 @@ const Waifinder = {
 
     try {
       const publicId = this.publicId || 'token-session';
+      const recentExcludeIds = this.rollHistory
+        .map((r) => r.character?.id)
+        .filter(Boolean)
+        .slice(-15);
+
       const res = await fetch(`/api/web/user/${encodeURIComponent(publicId)}/waifinder/roll`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token: this.token,
           gender: this.genderFilter,
+          ...(recentExcludeIds.length > 0 ? { excludeCharacterIds: recentExcludeIds } : {}),
         }),
       });
 
@@ -1168,9 +1178,9 @@ const Waifinder = {
           </div>
         </div>
 
-        <div id="waifinder-marry-modal-photo-status" style="display:none;width:100%;font-size:12px;font-weight:700;padding:7px 10px;border-radius:6px;background:rgba(236,72,153,0.12);border:1.5px dashed #ec4899;color:var(--text-main);"></div>
+        <div id="waifinder-marry-modal-photo-status" style="display:none;width:100%;max-width:100%;box-sizing:border-box;font-size:12px;font-weight:700;padding:7px 10px;border-radius:6px;background:rgba(236,72,153,0.12);border:1.5px dashed #ec4899;color:var(--text-main);"></div>
 
-        <div style="width:100%;background:var(--bg-card-subtle);border:var(--border-retro);border-radius:6px;padding:10px 12px;text-align:left;font-size:12.5px;display:flex;flex-direction:column;gap:5px;">
+        <div style="width:100%;max-width:100%;box-sizing:border-box;background:var(--bg-card-subtle);border:var(--border-retro);border-radius:6px;padding:10px 12px;text-align:left;font-size:12.5px;display:flex;flex-direction:column;gap:5px;">
           <div>🔑 Chaves: <b>${marryData.keys || 1}/10</b></div>
           <div>💜 Saldo atual: <b>${Number(marryData.kakeraBalance || 0).toLocaleString('pt-BR')} Zinthos</b></div>
           ${remainingLine ? `<div>📅 Limite diário (${rarityInfo.label}): ${remainingLine}</div>` : ''}

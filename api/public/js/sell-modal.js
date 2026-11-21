@@ -20,7 +20,7 @@
       overlay.className = 'modal-overlay hidden';
       overlay.id = 'modal-quick-sell';
       overlay.innerHTML = `
-        <div class="modal-box" style="max-width: min(460px, 92vw); height: auto; max-height: 85dvh;">
+        <div class="modal-box" style="max-width: min(440px, 94vw); width: 100%; box-sizing: border-box; height: auto; max-height: 85dvh;">
           <div class="modal-header">
             <span class="modal-title" style="font-size: clamp(13px, 3.8vw, 16px);">📢 Anunciar nos Classificados</span>
             <button type="button" class="modal-close" id="btn-quick-sell-close" aria-label="Fechar">&times;</button>

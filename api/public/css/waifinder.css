@@ -89,13 +89,15 @@
 }
 
 .waifinder-user-badge {
+  position: relative;
+  overflow: hidden;
   background: #fef08a;
-  color: #854d0e;
+  color: #713f12;
   border: var(--border-retro);
   border-color: #ca8a04;
   border-radius: var(--radius-retro);
-  padding: 3px 9px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 14px;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
@@ -105,9 +107,38 @@
   box-sizing: border-box;
 }
 
+.waifinder-user-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: #eab308;
+  opacity: 0.38;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.waifinder-user-name-wrap,
+.waifinder-rolls-indicator {
+  position: relative;
+  z-index: 1;
+}
+
+.waifinder-user-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
 .waifinder-rolls-indicator {
   font-weight: 900;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* Botão Toggle Olhando / Rollando */
@@ -167,9 +198,15 @@ body.dark-mode .waifinder-header-btn:hover {
 }
 
 body.dark-mode .waifinder-user-badge {
-  background: #27163f;
-  color: #f5f3ff;
+  background: #170d26;
+  color: #faf5ff;
   border-color: #9333ea;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+body.dark-mode .waifinder-user-progress-bar {
+  background: #9333ea;
+  opacity: 0.45;
 }
 
 /* Palco do Deck + Camada Flutuante de Stamps (fixa na tela, sem girar com o card) */
@@ -497,7 +534,7 @@ body.dark-mode .waifinder-user-badge {
 }
 
 .waifinder-char-name {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--text-main);
   line-height: 1.2;
@@ -508,7 +545,7 @@ body.dark-mode .waifinder-user-badge {
 }
 
 .waifinder-char-series {
-  font-size: 13px;
+  font-size: 15.5px;
   font-weight: 700;
   color: var(--text-muted);
   margin-bottom: 6px;
@@ -522,7 +559,7 @@ body.dark-mode .waifinder-user-badge {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-muted);
   margin-bottom: 6px;
@@ -533,12 +570,12 @@ body.dark-mode .waifinder-user-badge {
 }
 
 .waifinder-char-desc {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
   color: var(--text-main);
   opacity: 0.9;
   overflow-y: auto;
-  max-height: 65px;
+  max-height: 70px;
   padding-right: 4px;
   scrollbar-width: thin;
 }
@@ -721,10 +758,10 @@ body.dark-mode #btn-marry-modal-photo.is-done {
 }
 
 .waifinder-roll-status-banner {
-  font-size: 11.5px;
+  font-size: 13.5px;
   font-weight: 800;
-  padding: 4px 8px;
-  border-radius: 5px;
+  padding: 5px 9px;
+  border-radius: 6px;
   margin-bottom: 6px;
   border: 1.5px solid;
   display: flex;
@@ -1014,11 +1051,11 @@ body.dark-mode .waifinder-roll-status-banner.is-expired {
 /* Botões Laterais (+ Wishlist e Sugerir) */
 .btn-side-action {
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-main);
   gap: 6px;
   flex: 1;
-  max-width: 115px;
+  max-width: 130px;
 }
 
 .btn-wishlist-action {
@@ -1203,33 +1240,66 @@ body.dark-mode .btn-like-action.is-marry-ring:disabled {
   50% { transform: scale(1.1); }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 600px) {
   .waifinder-container {
-    padding: 4px 8px 10px 8px;
+    width: 94% !important;
+    max-width: 94vw !important;
+    margin: 0 auto !important;
+    padding: 4px 0 10px 0 !important;
   }
   .waifinder-header {
-    padding: 5px 8px;
+    padding: 6px 10px;
   }
   .waifinder-brand {
-    font-size: 14px;
-    gap: 5px;
+    font-size: 16.5px;
+    gap: 6px;
   }
   .waifinder-brand .brand-icon {
-    font-size: 16px;
+    font-size: 19px;
   }
   .waifinder-header-actions {
-    gap: 4px;
+    gap: 5px;
   }
   .waifinder-header-btn {
-    padding: 4px 6px;
-    font-size: 11px;
-    gap: 3px;
+    padding: 5px 8px;
+    font-size: 13.5px;
+    gap: 4px;
+  }
+  .waifinder-user-badge {
+    padding: 4px 10px;
+    font-size: 14px;
+  }
+  .waifinder-rolls-indicator {
+    font-size: 14px;
+  }
+  .waifinder-char-name {
+    font-size: 22px;
+  }
+  .waifinder-char-series {
+    font-size: 15px;
+  }
+  .waifinder-char-stats {
+    font-size: 13px;
+  }
+  .waifinder-char-desc {
+    font-size: 14px;
+  }
+  .waifinder-roll-status-banner {
+    font-size: 13.5px;
   }
   .btn-side-action {
-    padding: 8px 8px;
-    font-size: 11.5px;
-    gap: 4px;
+    padding: 8px 10px;
+    font-size: 13.5px;
+    gap: 5px;
     white-space: nowrap;
+  }
+  .btn-waifinder-sub-action,
+  .btn-waifinder-announce,
+  .btn-waifinder-marriage-photo,
+  .btn-waifinder-covet,
+  .btn-rarity-opt,
+  .btn-report-opt {
+    font-size: 13.5px;
   }
   .waifinder-desktop-hints {
     display: none;
@@ -1238,11 +1308,24 @@ body.dark-mode .btn-like-action.is-marry-ring:disabled {
 
 @media (max-width: 375px) {
   .waifinder-brand {
-    font-size: 13px;
+    font-size: 15px;
   }
   .waifinder-header-btn {
-    padding: 3px 5px;
-    font-size: 10.5px;
+    padding: 4px 6px;
+    font-size: 12.5px;
+  }
+  .btn-side-action {
+    padding: 7px 8px;
+    font-size: 12.5px;
+  }
+  .waifinder-char-name {
+    font-size: 20px;
+  }
+  .waifinder-char-series {
+    font-size: 14px;
+  }
+  .waifinder-char-stats {
+    font-size: 12px;
   }
 }
 

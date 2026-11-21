@@ -54,6 +54,11 @@ function checkLoggedInUser() {
   }
 
   if (publicId && token) {
+    const btnWaifinder = document.getElementById('btn-open-waifinder');
+    if (btnWaifinder) {
+      btnWaifinder.href = `/catalogo?publicId=${encodeURIComponent(publicId)}&token=${encodeURIComponent(token)}`;
+    }
+
     if (!allowStay) {
       window.location.replace(`/user/${encodeURIComponent(publicId)}`);
       return;
