@@ -260,12 +260,19 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
       const hostingCostInfo = buildHostingCostInfo(haremResult.data);
 
       if (isOwner) {
-        const wishlistResult = await wishlistService.getWishlist(user.id);
-        const covetCountsMap = await covetService.getHaremCovetCounts(user.id);
-        const covetedCharacterIds = await covetService.getUserCovetedCharacterIds(user.id);
-        const unreadNotificationsCount = await fastify.prisma.userNotification.count({
-          where: { userId: user.id, isRead: false },
-        });
+        const [wishlistResult, covetCountsMap, covetedCharacterIds, unreadNotificationsCount, activeListings] = await Promise.all([
+          wishlistService.getWishlist(user.id),
+          covetService.getHaremCovetCounts(user.id),
+          covetService.getUserCovetedCharacterIds(user.id),
+          fastify.prisma.userNotification.count({
+            where: { userId: user.id, isRead: false },
+          }),
+          fastify.prisma.marketListing.findMany({
+            where: { userId: user.id, status: 'ACTIVE' },
+            select: { characterId: true },
+          }),
+        ]);
+        const listedCharacterIds = activeListings.map((l) => l.characterId);
 
         const enrichedHarem = haremResult.data.map((item) => ({
           ...item,
@@ -318,6 +325,7 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
             collections: userCollections,
             wishlist: wishlistResult,
             covetedCharacterIds,
+            listedCharacterIds,
             inventory: currentInventory,
             hostingCost: hostingCostInfo,
           },
@@ -749,6 +757,256 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * Gera ou regenera a foto oficial do casamento na Ravena AI (restrito ao cônjuge autenticado)
+   */
+  fastify.post('/api/web/user/:publicId/harem/:characterId/marriage-photo/generate', {
+    config: {
+      rateLimit: {
+        max: 6,
+        timeWindow: '1 minute',
+      },
+    },
+    schema: {
+      description: 'Solicita à Ravena AI a geração de uma foto de casamento para personagem do harém',
+      tags: ['Usuário (Web)'],
+      params: {
+        type: 'object',
+        required: ['publicId', 'characterId'],
+        properties: {
+          publicId: { type: 'string', maxLength: 128 },
+          characterId: { type: 'string', maxLength: 128 },
+        },
+      },
+      body: {
+        type: 'object',
+        required: ['token'],
+        additionalProperties: false,
+        properties: {
+          token: { type: 'string', maxLength: 256 },
+          photoIndex: { type: 'integer', minimum: 1, maximum: 50 },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { publicId, characterId } = request.params as { publicId: string; characterId: string };
+      const { token, photoIndex } = request.body as { token: string; photoIndex?: number };
+
+      const session = publicId === 'token-session'
+        ? await webSessionService.validateTokenOnly(token)
+        : await webSessionService.validateUserSession(publicId, token);
+
+      if (!session.valid || !session.userId) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Sessão web expirada ou inválida.' },
+        });
+      }
+
+      const userId = session.userId;
+
+      return withBusinessSpan(
+        'waifu marriage_photo.generate',
+        { 'waifu.user.id': userIdAttr(userId) },
+        async () => {
+          const [user, ownedEntry] = await Promise.all([
+            fastify.prisma.user.findUnique({
+              where: { id: userId },
+              select: { name: true },
+            }),
+            fastify.prisma.haremEntry.findUnique({
+              where: { userId_characterId: { userId, characterId } },
+              include: { character: true },
+            }),
+          ]);
+
+          if (!ownedEntry) {
+            return reply.status(404).send({
+              success: false,
+              error: { code: 'NOT_IN_HAREM', message: 'Você precisa estar casado com este personagem para gerar a foto do casal.' },
+            });
+          }
+
+          const char = ownedEntry.character;
+          const formattedImages = (char.imageUrls || []).map((img) =>
+            characterService.formatImageUrl(char.id, img)
+          );
+          const defaultImageUrl =
+            ownedEntry.pinnedPhoto && ownedEntry.pinnedPhoto !== 'marriage' && char.imageUrls.includes(ownedEntry.pinnedPhoto)
+              ? characterService.formatImageUrl(char.id, ownedEntry.pinnedPhoto)
+              : (formattedImages[0] || characterService.getRandomImageUrl(char.id, char.imageUrls));
+
+          const ravenaUrl = `${(config.RAVENA_API_URL || 'http://172.22.0.1:5001').replace(/\/+$/, '')}/api/waifu/marriage-photo/generate`;
+
+          try {
+            const upstreamRes = await fetch(ravenaUrl, {
+              method: 'POST',
+              headers: ravenaMarketHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+              body: JSON.stringify({
+                userId,
+                userName: user?.name || 'Jogador',
+                photoIndex,
+                character: {
+                  id: char.id,
+                  name: char.name,
+                  series: char.series,
+                  description: char.description,
+                  baseRarity: char.baseRarity,
+                  rarity: char.isMythic ? 'MYTHIC' : char.baseRarity,
+                  gender: char.gender,
+                  isMythic: Boolean(char.isMythic),
+                  imageUrl: defaultImageUrl,
+                  imageUrls: formattedImages,
+                },
+              }),
+              signal: AbortSignal.timeout(120000),
+            });
+
+            const json = (await upstreamRes.json().catch(() => null)) as any;
+            if (!upstreamRes.ok || !json?.success) {
+              return reply.status(upstreamRes.status >= 400 ? upstreamRes.status : 502).send({
+                success: false,
+                error: {
+                  code: upstreamRes.status === 429 ? 'PHOTO_IN_PROGRESS' : 'PHOTO_GENERATION_FAILED',
+                  message: json?.error || 'Não foi possível gerar a foto do casamento agora. Tente novamente em instantes.',
+                },
+              });
+            }
+
+            const updatedAt = json.data?.updatedAt || Date.now();
+            return reply.send({
+              success: true,
+              data: {
+                characterId: char.id,
+                photoUrl: `${haremService.marriagePhotoUrl(char.id)}?t=${updatedAt}`,
+                existedBefore: Boolean(json.data?.existedBefore),
+                hasPrevious: Boolean(json.data?.hasPrevious),
+                updatedAt,
+                message: 'Foto do casamento gerada com sucesso!',
+              },
+            });
+          } catch {
+            return reply.status(503).send({
+              success: false,
+              error: {
+                code: 'RAVENA_UNAVAILABLE',
+                message: 'A Ravena AI demorou muito ou está indisponível no momento. Tente novamente em instantes.',
+              },
+            });
+          }
+        }
+      );
+    },
+  });
+
+  /**
+   * Reverte a última troca de foto oficial do casamento na Ravena AI (Desfazer)
+   */
+  fastify.post('/api/web/user/:publicId/harem/:characterId/marriage-photo/revert', {
+    config: {
+      rateLimit: {
+        max: 12,
+        timeWindow: '1 minute',
+      },
+    },
+    schema: {
+      description: 'Desfaz a última geração de foto de casamento restaurando a anterior na Ravena AI',
+      tags: ['Usuário (Web)'],
+      params: {
+        type: 'object',
+        required: ['publicId', 'characterId'],
+        properties: {
+          publicId: { type: 'string', maxLength: 128 },
+          characterId: { type: 'string', maxLength: 128 },
+        },
+      },
+      body: {
+        type: 'object',
+        required: ['token'],
+        additionalProperties: false,
+        properties: {
+          token: { type: 'string', maxLength: 256 },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const { publicId, characterId } = request.params as { publicId: string; characterId: string };
+      const { token } = request.body as { token: string };
+
+      const session = publicId === 'token-session'
+        ? await webSessionService.validateTokenOnly(token)
+        : await webSessionService.validateUserSession(publicId, token);
+
+      if (!session.valid || !session.userId) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Sessão web expirada ou inválida.' },
+        });
+      }
+
+      const userId = session.userId;
+
+      return withBusinessSpan(
+        'waifu marriage_photo.revert',
+        { 'waifu.user.id': userIdAttr(userId) },
+        async () => {
+          const ownedEntry = await fastify.prisma.haremEntry.findUnique({
+            where: { userId_characterId: { userId, characterId } },
+            select: { characterId: true },
+          });
+
+          if (!ownedEntry) {
+            return reply.status(404).send({
+              success: false,
+              error: { code: 'NOT_IN_HAREM', message: 'Você precisa estar casado com este personagem para desfazer a foto.' },
+            });
+          }
+
+          const ravenaUrl = `${(config.RAVENA_API_URL || 'http://172.22.0.1:5001').replace(/\/+$/, '')}/api/waifu/marriage-photo/revert`;
+
+          try {
+            const upstreamRes = await fetch(ravenaUrl, {
+              method: 'POST',
+              headers: ravenaMarketHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+              body: JSON.stringify({ characterId: ownedEntry.characterId }),
+              signal: AbortSignal.timeout(15000),
+            });
+
+            const json = (await upstreamRes.json().catch(() => null)) as any;
+            if (!upstreamRes.ok || !json?.success) {
+              return reply.status(upstreamRes.status >= 400 ? upstreamRes.status : 400).send({
+                success: false,
+                error: {
+                  code: 'PHOTO_REVERT_FAILED',
+                  message: json?.error || 'Nenhuma foto anterior disponível para desfazer.',
+                },
+              });
+            }
+
+            const updatedAt = json.data?.updatedAt || Date.now();
+            return reply.send({
+              success: true,
+              data: {
+                characterId: ownedEntry.characterId,
+                photoUrl: `${haremService.marriagePhotoUrl(ownedEntry.characterId)}?t=${updatedAt}`,
+                updatedAt,
+                message: json.data?.message || 'Foto de casamento revertida para a versão anterior!',
+              },
+            });
+          } catch {
+            return reply.status(503).send({
+              success: false,
+              error: {
+                code: 'RAVENA_UNAVAILABLE',
+                message: 'Erro ao comunicar com a Ravena AI para desfazer a foto.',
+              },
+            });
+          }
+        }
+      );
+    },
+  });
+
+  /**
    * Proxy de streaming da foto oficial de casamento (provida pela Ravena)
    */
   fastify.get('/api/web/marriage-photo/:characterId', {
@@ -763,6 +1021,7 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
     },
     handler: async (request, reply) => {
       const { characterId } = request.params as { characterId: string };
+      const q = (request.query || {}) as { t?: string; v?: string };
       const targetUrl = `${config.RAVENA_API_URL}/api/waifuletes/marriage-photo/${encodeURIComponent(characterId)}`;
 
       try {
@@ -776,7 +1035,10 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
 
         const contentType = response.headers.get('content-type') || 'image/jpeg';
         reply.header('Content-Type', contentType);
-        reply.header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+        reply.header(
+          'Cache-Control',
+          q.t || q.v ? 'no-cache, must-revalidate' : 'public, max-age=60, stale-while-revalidate=300'
+        );
 
         const arrayBuffer = await response.arrayBuffer();
         return reply.send(Buffer.from(arrayBuffer));
@@ -945,6 +1207,7 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
         farmTickets: number;
         secondsToNext: number;
         fullRechargeSeconds: number;
+        claimLockSeconds: number;
       } | null = null;
 
       if (token) {
@@ -983,6 +1246,7 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
             farmTickets,
             secondsToNext: rollsState.secondsToNext,
             fullRechargeSeconds: rollsState.fullRechargeSeconds,
+            claimLockSeconds: config.CLAIM_LOCK_SECONDS,
           };
         }
       }
@@ -1150,29 +1414,8 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
               ? reservation.remainingTickets + 1
               : reservation.remainingTickets;
 
-            // Atualiza lock pessoal do roll ativo no Waifinder (substitui o anterior para impedir cherry-pick)
-            const activeRollKey = `waifinder:active_roll:${userId}`;
-            const prevRaw = await fastify.redis.get(activeRollKey);
-            if (prevRaw) {
-              try {
-                const prev = JSON.parse(prevRaw);
-                if (prev?.characterId && prev.characterId !== data.character.id) {
-                  await cooldownService.releaseClaimLock(waifinderLockGroup, prev.characterId);
-                }
-              } catch (_) {}
-            }
-
-            if (data.available) {
-              await fastify.redis.set(
-                activeRollKey,
-                JSON.stringify({ characterId: data.character.id, rolledAt: Date.now() }),
-                'EX',
-                config.CLAIM_LOCK_SECONDS
-              );
-            } else {
-              await fastify.redis.del(activeRollKey);
-            }
-
+            // Cada roll livre mantém seu próprio lock Redis `lock:char:waifinder:<userId>:<characterId>`
+            // pelo tempo real configurado em `CLAIM_LOCK_SECONDS`, permitindo voltar ao roll anterior dentro da janela.
             // Casamento instantâneo por cota em personagem Lendário: notifica nos grupos de avisos
             if (data.instantMarriage && data.character.baseRarity === 'LEGENDARY') {
               const user = await fastify.prisma.user.findUnique({
@@ -1191,7 +1434,40 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
               });
             }
 
-            const likeTtl = await fastify.redis.ttl(`cooldown:like:${userId}:${data.character.id}`);
+            const isMarriedNonMythic = !data.available && !data.isMythic;
+            const [likeTtl, marriedStatusFlags] = await Promise.all([
+              fastify.redis.ttl(`cooldown:like:${userId}:${data.character.id}`),
+              isMarriedNonMythic
+                ? (async () => {
+                    if (data.isOwner) {
+                      const [activeListing, haremEntry] = await Promise.all([
+                        fastify.prisma.marketListing.findFirst({
+                          where: { userId, characterId: data.character.id, status: 'ACTIVE' },
+                          select: { id: true },
+                        }),
+                        fastify.prisma.haremEntry.findFirst({
+                          where: { userId, characterId: data.character.id },
+                          select: { isLocked: true, collection: { select: { isLocked: true } } },
+                        }),
+                      ]);
+                      return {
+                        isListed: Boolean(activeListing),
+                        isListBlocked: Boolean(haremEntry?.isLocked || haremEntry?.collection?.isLocked),
+                        isCoveted: false,
+                      };
+                    }
+                    const existingCovet = await fastify.prisma.characterCovet.findUnique({
+                      where: { characterId_userId: { characterId: data.character.id, userId } },
+                      select: { id: true },
+                    });
+                    return {
+                      isListed: false,
+                      isListBlocked: false,
+                      isCoveted: Boolean(existingCovet),
+                    };
+                  })()
+                : Promise.resolve({ isListed: false, isListBlocked: false, isCoveted: false }),
+            ]);
             const totalAvailableRolls = data.rollsRemaining + farmRollsAfter + farmTicketsAfter;
 
             setAttrs({
@@ -1203,6 +1479,8 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
               success: true,
               data: {
                 ...data,
+                ...marriedStatusFlags,
+                claimLockSeconds: config.CLAIM_LOCK_SECONDS,
                 character: {
                   ...data.character,
                   isWishlisted: data.isWishlist,
@@ -1217,6 +1495,7 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
                   farmTickets: farmTicketsAfter,
                   secondsToNext: data.nextRollSeconds,
                   fullRechargeSeconds: data.fullRechargeSeconds,
+                  claimLockSeconds: config.CLAIM_LOCK_SECONDS,
                 },
               },
             });
@@ -1289,25 +1568,6 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
         'waifinder marry',
         { 'waifu.user.id': userIdAttr(userId) },
         async () => {
-          const activeRollKey = `waifinder:active_roll:${userId}`;
-          const activeRaw = await fastify.redis.get(activeRollKey);
-          let activeData: { characterId?: string } | null = null;
-          if (activeRaw) {
-            try {
-              activeData = JSON.parse(activeRaw);
-            } catch (_) {}
-          }
-
-          if (!activeData?.characterId || activeData.characterId !== characterId) {
-            return reply.status(400).send({
-              success: false,
-              error: {
-                code: 'LOCK_EXPIRED',
-                message: 'Este personagem não corresponde ao seu roll ativo no Waifinder ou o tempo de 5 minutos expirou.',
-              },
-            });
-          }
-
           const claimedInGroup = await resolveUserLatestGroupId(fastify.prisma, userId);
           const user = await fastify.prisma.user.findUnique({
             where: { id: userId },
@@ -1321,6 +1581,8 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
             platform: user?.platform || 'WHATSAPP',
           });
 
+          // Segurança via lock exclusivo `lock:char:waifinder:<userId>:<characterId>` com TTL real (`CLAIM_LOCK_SECONDS`).
+          // Garante que apenas personagens rolados por este usuário no Waifinder dentro da janela possam casar.
           const marryResult = await marryService.marry({
             userId,
             groupId: claimedInGroup,
@@ -1329,10 +1591,20 @@ export const userWebRoutes: FastifyPluginAsync = async (fastify) => {
           });
 
           if (!marryResult.success) {
+            if (marryResult.error?.code === 'LOCK_EXPIRED') {
+              const windowStr = config.CLAIM_LOCK_SECONDS >= 60
+                ? `${Math.floor(config.CLAIM_LOCK_SECONDS / 60)} minuto(s)`
+                : `${config.CLAIM_LOCK_SECONDS} segundos`;
+              return reply.status(400).send({
+                success: false,
+                error: {
+                  code: 'LOCK_EXPIRED',
+                  message: `A janela de ${windowStr} para casar expirou ou este personagem não foi rolado por você no Waifinder.`,
+                },
+              });
+            }
             return reply.status(400).send(marryResult);
           }
-
-          await fastify.redis.del(activeRollKey);
 
           if (marryResult.data?.character?.rarity === 'LEGENDARY') {
             notifyRavenaLegendaryMarriage({

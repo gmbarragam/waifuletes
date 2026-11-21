@@ -119,6 +119,35 @@ describe('Waifinder Rolling Mode, Fazenda/Donate & Anti-Abuse Security', () => {
           return;
         }
 
+        if (req.url === '/api/waifu/marriage-photo/generate' && req.method === 'POST') {
+          res.end(
+            JSON.stringify({
+              success: true,
+              data: {
+                characterId: body.character?.id,
+                existedBefore: true,
+                hasPrevious: true,
+                updatedAt: 1795277000000,
+              },
+            })
+          );
+          return;
+        }
+
+        if (req.url === '/api/waifu/marriage-photo/revert' && req.method === 'POST') {
+          res.end(
+            JSON.stringify({
+              success: true,
+              data: {
+                characterId: body.characterId,
+                message: 'Foto de casamento revertida para a versão anterior!',
+                updatedAt: 1795277005000,
+              },
+            })
+          );
+          return;
+        }
+
         res.statusCode = 404;
         res.end(JSON.stringify({ success: false }));
       });
@@ -165,40 +194,51 @@ describe('Waifinder Rolling Mode, Fazenda/Donate & Anti-Abuse Security', () => {
 
   afterAll(async () => {
     try {
-      // Desfaz casamentos criados nos testes e restaura claimCount
-      for (const charId of marriedCharIds) {
-        await server.prisma.haremEntry.deleteMany({
-          where: { characterId: charId, userId: { in: [userId, otherUserId] } },
+      if (server?.prisma) {
+        // Desfaz casamentos criados nos testes e restaura claimCount
+        for (const charId of marriedCharIds) {
+          await server.prisma.haremEntry.deleteMany({
+            where: { characterId: charId, userId: { in: [userId, otherUserId] } },
+          });
+          await server.prisma.character.update({
+            where: { id: charId },
+            data: { claimCount: { decrement: 1 } },
+          }).catch(() => {});
+        }
+
+        await server.prisma.marketListingNotification.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+        await server.prisma.marketListing.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+        await server.prisma.characterCovet.deleteMany({
+          where: { OR: [{ userId: { in: [userId, otherUserId] } }, { ownerId: { in: [userId, otherUserId] } }] },
         });
-        await server.prisma.character.update({
-          where: { id: charId },
-          data: { claimCount: { decrement: 1 } },
-        }).catch(() => {});
+        await server.prisma.wishlistEntry.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+        await server.prisma.userNotification.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+        await server.prisma.kakeraTransaction.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+        await server.prisma.userGroup.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+        await server.prisma.user.deleteMany({ where: { id: { in: [userId, otherUserId] } } });
+        await server.prisma.group.deleteMany({ where: { id: groupId } });
       }
 
-      await server.prisma.kakeraTransaction.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
-      await server.prisma.userGroup.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
-      await server.prisma.user.deleteMany({ where: { id: { in: [userId, otherUserId] } } });
-      await server.prisma.group.deleteMany({ where: { id: groupId } });
-
-      // Limpa chaves Redis criadas pelo teste
-      const keysToDel = [
-        `rolls:${userId}`,
-        `rolls:${otherUserId}`,
-        `waifinder:active_roll:${userId}`,
-        `waifinder:active_roll:${otherUserId}`,
-        `waifinder:roll:lock:${userId}`,
-        `waifinder:roll:lock:${otherUserId}`,
-        `seen:${userId}:${groupId}`,
-        `seen:${userId}:WAIFINDER`,
-        `seen:${otherUserId}:WAIFINDER`,
-        ...createdSessionTokens.map((t) => `web:session:${t}`),
-      ];
-      for (const r of ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY']) {
-        keysToDel.push(`cooldown:claim:${userId}:${r}`, `cooldown:daily:marry:${userId}:${r}`);
-        keysToDel.push(`cooldown:claim:${otherUserId}:${r}`, `cooldown:daily:marry:${otherUserId}:${r}`);
+      if (server?.redis) {
+        // Limpa chaves Redis criadas pelo teste
+        const keysToDel = [
+          `rolls:${userId}`,
+          `rolls:${otherUserId}`,
+          `waifinder:active_roll:${userId}`,
+          `waifinder:active_roll:${otherUserId}`,
+          `waifinder:roll:lock:${userId}`,
+          `waifinder:roll:lock:${otherUserId}`,
+          `seen:${userId}:${groupId}`,
+          `seen:${userId}:WAIFINDER`,
+          `seen:${otherUserId}:WAIFINDER`,
+          ...createdSessionTokens.map((t) => `web:session:${t}`),
+        ];
+        for (const r of ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY']) {
+          keysToDel.push(`cooldown:claim:${userId}:${r}`, `cooldown:daily:marry:${userId}:${r}`);
+          keysToDel.push(`cooldown:claim:${otherUserId}:${r}`, `cooldown:daily:marry:${otherUserId}:${r}`);
+        }
+        await server.redis.del(...keysToDel);
       }
-      await server.redis.del(...keysToDel);
     } finally {
       if (server) await server.close();
       if (mockRavenaServer) await new Promise<void>((resolve) => mockRavenaServer.close(() => resolve()));
@@ -219,6 +259,8 @@ describe('Waifinder Rolling Mode, Fazenda/Donate & Anti-Abuse Security', () => {
     // maxRolls = 9 base + 3 extraMaxRolls = 12; available = 12 normais + 1 farmRoll + 1 farmTicket = 14
     expect(json.data.user.rolls.maxRolls).toBe(12);
     expect(json.data.user.rolls.availableRolls).toBe(14);
+    expect(typeof json.data.user.rolls.claimLockSeconds).toBe('number');
+    expect(json.data.user.rolls.claimLockSeconds).toBeGreaterThan(0);
     expect(json.data.characters.length).toBeGreaterThan(0);
     expect(typeof json.data.characters[0].wishlistCount).toBe('number');
   });
@@ -376,5 +418,157 @@ describe('Waifinder Rolling Mode, Fazenda/Donate & Anti-Abuse Security', () => {
     });
     expect(entry?.userId).toBe(userId);
     expect(entry?.claimedInGroup).toBe(groupId);
+  });
+
+  it('Voltar ao roll anterior: novo roll não deve apagar o lock anterior dentro de CLAIM_LOCK_SECONDS e lock expirado deve bloquear casamento', async () => {
+    // Limpa cooldown de claim da raridade COMMON gerado no teste anterior e libera single-flight lock
+    await server.redis.del(
+      `cooldown:claim:${userId}:COMMON`,
+      `waifinder:roll:lock:${userId}`
+    );
+
+    const roll1Res = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/waifinder/roll`,
+      payload: { token, gender: 'ALL' },
+    });
+    expect(roll1Res.statusCode).toBe(200);
+    const roll1Json = roll1Res.json();
+    expect(roll1Json.data.claimLockSeconds).toBeGreaterThan(0);
+
+    // Libera mutex single-flight (400ms) para simular o segundo roll consecutivo do jogador
+    await server.redis.del(`waifinder:roll:lock:${userId}`);
+    const roll2Res = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/waifinder/roll`,
+      payload: { token, gender: 'ALL' },
+    });
+    expect(roll2Res.statusCode).toBe(200);
+
+    // Simula 2 personagens livres dentro da janela (primeiro rolado antes do segundo)
+    const twoFreeChars = await server.prisma.character.findMany({
+      where: {
+        isActive: true,
+        isMythic: false,
+        baseRarity: 'COMMON',
+        haremEntries: { none: {} },
+      },
+      take: 2,
+      select: { id: true },
+    });
+    expect(twoFreeChars.length).toBe(2);
+    const [firstChar, secondChar] = twoFreeChars;
+
+    await server.redis.set(`lock:char:waifinder:${userId}:${firstChar.id}`, userId, 'EX', 300);
+    await server.redis.set(`lock:char:waifinder:${userId}:${secondChar.id}`, userId, 'EX', 300);
+
+    // Após um terceiro roll real, o lock de firstChar NÃO pode ser destruído
+    await server.redis.del(`waifinder:roll:lock:${userId}`);
+    const roll3Res = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/waifinder/roll`,
+      payload: { token, gender: 'ALL' },
+    });
+    expect(roll3Res.statusCode).toBe(200);
+    const preservedFirstTtl = await server.redis.ttl(`lock:char:waifinder:${userId}:${firstChar.id}`);
+    expect(preservedFirstTtl).toBeGreaterThan(0);
+
+    // Usuário clica em "Voltar!" para firstChar e casa normalmente dentro dos 300s
+    const marryFirstRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/waifinder/marry`,
+      payload: { token, characterId: firstChar.id },
+    });
+    expect(marryFirstRes.statusCode).toBe(200);
+    marriedCharIds.push(firstChar.id);
+
+    // Se o lock de secondChar expirou (deletado/TTL zerado), o casamento DEVE ser bloqueado
+    await server.redis.del(
+      `cooldown:claim:${userId}:COMMON`,
+      `lock:char:waifinder:${userId}:${secondChar.id}`
+    );
+    const marryExpiredRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/waifinder/marry`,
+      payload: { token, characterId: secondChar.id },
+    });
+    expect(marryExpiredRes.statusCode).toBe(400);
+    expect(marryExpiredRes.json().error.code).toBe('LOCK_EXPIRED');
+  });
+
+  it('Cobiçar e Anunciar: rotas web permitem cobiçar casamento alheio, anunciar casamento próprio e refletem listedCharacterIds', async () => {
+    expect(marriedCharIds.length).toBeGreaterThan(0);
+    const ownedCharId = marriedCharIds[0];
+
+    // Outro usuário cobiça o personagem casado de `userId`
+    const covetRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${otherPublicId}/covet`,
+      payload: { token: otherToken, characterId: ownedCharId },
+    });
+    expect(covetRes.statusCode).toBe(200);
+    expect(covetRes.json().success).toBe(true);
+
+    // Dono anuncia seu próprio personagem casado nos classificados
+    const listRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/market/listings`,
+      payload: { token, characterId: ownedCharId, interest: 'Outras waifus raras' },
+    });
+    expect(listRes.statusCode).toBe(200);
+    expect(listRes.json().success).toBe(true);
+
+    // GET /api/web/user/:publicId para dono inclui listedCharacterIds e para cobiçador inclui covetedCharacterIds
+    const [ownerProfileRes, otherProfileRes] = await Promise.all([
+      server.inject({
+        method: 'GET',
+        url: `/api/web/user/${publicId}?token=${encodeURIComponent(token)}`,
+      }),
+      server.inject({
+        method: 'GET',
+        url: `/api/web/user/${otherPublicId}?token=${encodeURIComponent(otherToken)}`,
+      }),
+    ]);
+
+    expect(ownerProfileRes.statusCode).toBe(200);
+    expect(ownerProfileRes.json().data.listedCharacterIds).toContain(ownedCharId);
+    expect(otherProfileRes.statusCode).toBe(200);
+    expect(otherProfileRes.json().data.covetedCharacterIds).toContain(ownedCharId);
+  });
+
+  it('Foto do Casamento (Web): apenas cônjuge autenticado pode gerar/reverter foto na Ravena', async () => {
+    expect(marriedCharIds.length).toBeGreaterThan(0);
+    const ownedCharId = marriedCharIds[0];
+
+    // Outro usuário não-dono não pode gerar foto
+    const unauthOtherRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${otherPublicId}/harem/${ownedCharId}/marriage-photo/generate`,
+      payload: { token: otherToken },
+    });
+    expect(unauthOtherRes.statusCode).toBe(404);
+    expect(unauthOtherRes.json().error.code).toBe('NOT_IN_HAREM');
+
+    // Dono gera nova foto com sucesso
+    const genRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/harem/${ownedCharId}/marriage-photo/generate`,
+      payload: { token },
+    });
+    expect(genRes.statusCode).toBe(200);
+    const genJson = genRes.json();
+    expect(genJson.success).toBe(true);
+    expect(genJson.data.hasPrevious).toBe(true);
+    expect(genJson.data.photoUrl).toContain(`/api/web/marriage-photo/${ownedCharId}?t=`);
+
+    // Dono desfaz/reverte a foto
+    const revRes = await server.inject({
+      method: 'POST',
+      url: `/api/web/user/${publicId}/harem/${ownedCharId}/marriage-photo/revert`,
+      payload: { token },
+    });
+    expect(revRes.statusCode).toBe(200);
+    expect(revRes.json().success).toBe(true);
+    expect(revRes.json().data.photoUrl).toContain(`/api/web/marriage-photo/${ownedCharId}?t=`);
   });
 });
