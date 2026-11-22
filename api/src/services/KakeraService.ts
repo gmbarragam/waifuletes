@@ -3,6 +3,29 @@ import { CooldownService } from './CooldownService.js';
 import { config } from '../config.js';
 import { DomainError } from '../errors/DomainError.js';
 
+/** Dias máximos da sequência do daily (a partir daí o bônus fica no do último dia). */
+export const DAILY_STREAK_MAX_DAYS = 7;
+
+/** Bônus percentual do daily por dia de sequência (dia 1: 0%, ..., dia 7: 100%). */
+export const DAILY_STREAK_BONUS_PERCENT: Record<number, number> = {
+  1: 0,
+  2: 10,
+  3: 20,
+  4: 30,
+  5: 40,
+  6: 50,
+  7: 100,
+};
+
+/** Piso do valor base do daily (depois da variância). */
+export const DAILY_MIN_BASE_AMOUNT = 100;
+
+/** Bônus da wishlist no daily: cada item soma base / WISHLIST_DAILY_BONUS_DIVISOR (+0,1% por item). */
+export const WISHLIST_DAILY_BONUS_DIVISOR = 1000;
+
+/** Teto do multiplicador da wishlist informado na resposta do daily (2x com 1000 itens). */
+export const WISHLIST_DAILY_MULTIPLIER_CAP = 2.0;
+
 export class KakeraService {
   constructor(
     private prisma: PrismaClient,
@@ -59,34 +82,24 @@ export class KakeraService {
       if (txTime >= cycleInfo.previousCycleStart.getTime() && txTime < cycleInfo.currentCycleStart.getTime()) {
         const prevMetadata = lastDailyTx.metadata as any;
         const prevStreak = typeof prevMetadata?.streak === 'number' ? prevMetadata.streak : 1;
-        currentStreak = Math.min(7, prevStreak + 1);
+        currentStreak = Math.min(DAILY_STREAK_MAX_DAYS, prevStreak + 1);
       } else {
         currentStreak = 1;
       }
     }
 
-    // Bônus percentual por dia de sequência:
-    // Dia 1: 0%, Dia 2: 10%, Dia 3: 20%, Dia 4: 30%, Dia 5: 40%, Dia 6: 50%, Dia 7: 100%
-    const streakBonusMap: Record<number, number> = {
-      1: 0,
-      2: 10,
-      3: 20,
-      4: 30,
-      5: 40,
-      6: 50,
-      7: 100,
-    };
-    const bonusPercent = streakBonusMap[currentStreak] ?? 0;
+    // Bônus percentual por dia de sequência (DAILY_STREAK_BONUS_PERCENT)
+    const bonusPercent = DAILY_STREAK_BONUS_PERCENT[currentStreak] ?? 0;
 
     // Calcula recompensa diária com variância, bônus de streak e bônus da wishlist
     const variance = (Math.random() * 2 - 1) * config.DAILY_KAKERA_VARIANCE;
-    const baseAmount = Math.max(100, Math.round(config.DAILY_KAKERA_AMOUNT + variance));
+    const baseAmount = Math.max(DAILY_MIN_BASE_AMOUNT, Math.round(config.DAILY_KAKERA_AMOUNT + variance));
     const streakBonusAmount = Math.round(baseAmount * (bonusPercent / 100));
 
     // Bônus proporcional da Wishlist: cada item na wishlist adiciona 1/1000 (+0.1%), dobrando o valor ao atingir 1000 itens (2.0x)
     const wishlistCount = await this.prisma.wishlistEntry.count({ where: { userId } });
-    const wishlistMultiplier = Math.min(2.0, 1 + wishlistCount / 1000);
-    const wishlistBonusAmount = Math.round(baseAmount * (wishlistCount / 1000));
+    const wishlistMultiplier = Math.min(WISHLIST_DAILY_MULTIPLIER_CAP, 1 + wishlistCount / WISHLIST_DAILY_BONUS_DIVISOR);
+    const wishlistBonusAmount = Math.round(baseAmount * (wishlistCount / WISHLIST_DAILY_BONUS_DIVISOR));
 
     const amount = baseAmount + streakBonusAmount + wishlistBonusAmount;
 
@@ -122,11 +135,11 @@ export class KakeraService {
       const nextDailyAt = cycleInfo.nextReset;
 
       let msg = currentStreak > 1
-        ? `Você recebeu ${amount} ${config.CURRENCY_NAME} ${config.CURRENCY_EMOJI}! 🔥 Sequência Diária: Dia ${currentStreak}/7 (+${bonusPercent}% bônus)!`
+        ? `Você recebeu ${amount} ${config.CURRENCY_NAME} ${config.CURRENCY_EMOJI}! 🔥 Sequência Diária: Dia ${currentStreak}/${DAILY_STREAK_MAX_DAYS} (+${bonusPercent}% bônus)!`
         : `Você recebeu ${amount} ${config.CURRENCY_NAME} ${config.CURRENCY_EMOJI}! Volte amanhã após as 04:00 para manter sua sequência!`;
 
       if (wishlistBonusAmount > 0) {
-        msg += ` 🌟 (+${wishlistBonusAmount} de Bônus Wishlist: ${wishlistCount}/1000)`;
+        msg += ` 🌟 (+${wishlistBonusAmount} de Bônus Wishlist: ${wishlistCount}/${WISHLIST_DAILY_BONUS_DIVISOR})`;
       }
 
       return {
@@ -138,7 +151,7 @@ export class KakeraService {
             current: currentStreak,
             bonusPercent,
             bonusAmount: streakBonusAmount,
-            maxStreak: 7,
+            maxStreak: DAILY_STREAK_MAX_DAYS,
           },
           wishlist: {
             count: wishlistCount,

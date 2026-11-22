@@ -55,6 +55,9 @@ docker compose up -d
 ```
 
 A API estará disponível imediatamente em `http://localhost:3030`.  
+Para registrar o commit da imagem (campo `version` de `GET /internal/economy/params`, usado pelo painel da economia
+da Ravena), construa com `GIT_SHA=$(git rev-parse --short HEAD) docker compose build`; sem a variável, o build
+funciona igual e `version` vem `null`.  
 Para verificar a saúde do serviço:
 ```bash
 curl http://localhost:3030/health
