@@ -442,15 +442,17 @@ describe('🤖 Prompt de IA e Classificação por Rank Mudae no RarityAdvisorSer
       expect(evaluation).not.toBeNull();
       expect(evaluation?.response).toContain('Veredito');
 
-      // Verifica se o systemPrompt recebido pelo LLM contém as regras do Mudae
+      // Verifica se o systemPrompt recebido pelo LLM contém o balizador Mudae + cultura pop/geek e relevância da obra
       const systemMsg = capturedBody.messages.find((m: any) => m.role === 'system');
-      expect(systemMsg.content).toContain('1 a 4466: Recomende LEGENDARY');
-      expect(systemMsg.content).toContain('4467 a 20701: Recomende EPIC');
-      expect(systemMsg.content).toContain('20702 a 62128: Recomende RARE');
+      expect(systemMsg.content).toContain('1 a 4466 (LEGENDARY)');
+      expect(systemMsg.content).toContain('4467 a 20701 (EPIC)');
+      expect(systemMsg.content).toContain('20702 a 62128 (RARE)');
+      expect(systemMsg.content).toContain('CULTURA POP E GEEK');
+      expect(systemMsg.content).toContain('RELEVÂNCIA E IMPACTO DA OBRA');
 
-      // Verifica se o userPrompt identifica o rank e a regra oficial
+      // Verifica se o userPrompt identifica o rank como balizador de referência
       const userMsg = capturedBody.messages.find((m: any) => m.role === 'user');
-      expect(userMsg.content).toContain('#450 (Top ~4.466 ➔ Regra Oficial: LENDÁRIO)');
+      expect(userMsg.content).toContain('#450 (Top ~4.466 ➔ Faixa de referência Mudae: LENDÁRIO)');
 
       // Verifica se salvou o parecer e o prompt no Redis para o /admin exibir
       expect(mockRedis.set).toHaveBeenCalledWith(
@@ -517,10 +519,10 @@ describe('🤖 Prompt de IA e Classificação por Rank Mudae no RarityAdvisorSer
       });
 
       const userMsgEpic = capturedBodies[0].messages.find((m: any) => m.role === 'user');
-      expect(userMsgEpic.content).toContain('#5000 (4.467 a 20.701 ➔ Regra Oficial: ÉPICO)');
+      expect(userMsgEpic.content).toContain('#5000 (4.467 a 20.701 ➔ Faixa de referência Mudae: ÉPICO)');
 
       const userMsgRare = capturedBodies[1].messages.find((m: any) => m.role === 'user');
-      expect(userMsgRare.content).toContain('#25000 (20.702 a 62.128 ➔ Regra Oficial: RARO)');
+      expect(userMsgRare.content).toContain('#25000 (20.702 a 62.128 ➔ Faixa de referência Mudae: RARO)');
     } finally {
       globalThis.fetch = originalFetch;
     }

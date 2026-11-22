@@ -1151,34 +1151,42 @@ function createSuggestionItem(s) {
 
   let aiAdvisorHtml = '';
   if (s.aiAdvisor) {
+    const aiModelLabel = s.aiAdvisor.model ? ` (${escapeHtml(s.aiAdvisor.model)})` : '';
     aiAdvisorHtml = `
-      <div style="margin: 10px 0; background: #fdf4ff; border: 1.5px solid #d946ef; border-radius: 6px; padding: 10px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleAiAdvisor('${s.id}')">
-          <div style="font-weight: 800; font-size: 13px; color: #86198f; display: flex; align-items: center; gap: 6px;">
-            <i class="fas fa-robot"></i> 🤖 Parecer da IA (Gemma 4 12B)
-            <span style="font-size: 11px; background: #fae8ff; color: #a21caf; border: 1px solid #e879f9; padding: 1px 6px; border-radius: 4px; font-weight: 700;">Rank Mudae integrado</span>
+      <div style="margin: 10px 0;" id="ai-advisor-container-${s.id}">
+        <div style="background: #fdf4ff; border: 1.5px solid #d946ef; border-radius: 6px; padding: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleAiAdvisor('${s.id}')">
+            <div style="font-weight: 800; font-size: 13px; color: #86198f; display: flex; align-items: center; gap: 6px;">
+              <i class="fas fa-robot"></i> 🤖 Parecer da IA${aiModelLabel}
+              <span style="font-size: 11px; background: #fae8ff; color: #a21caf; border: 1px solid #e879f9; padding: 1px 6px; border-radius: 4px; font-weight: 700;">Mudae + Cultura Pop & AniList</span>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button class="btn-retro btn-sm" id="btn-ai-refresh-${s.id}" style="font-size: 11px; padding: 2px 6px;" onclick="event.stopPropagation(); fetchAiAdvisor('${s.id}', true)" title="Reconsultar IA">
+                <i class="fas fa-sync-alt"></i>
+              </button>
+              <button class="btn-retro btn-sm" style="font-size: 11px; padding: 2px 8px;" onclick="event.stopPropagation(); toggleAiAdvisor('${s.id}')">
+                <i class="fas fa-chevron-down" id="ai-arrow-${s.id}"></i> Ver Parecer & Prompt
+              </button>
+            </div>
           </div>
-          <button class="btn-retro btn-sm" style="font-size: 11px; padding: 2px 8px;" onclick="event.stopPropagation(); toggleAiAdvisor('${s.id}')">
-            <i class="fas fa-chevron-down" id="ai-arrow-${s.id}"></i> Ver Parecer & Prompt
-          </button>
-        </div>
-        <div id="ai-advisor-content-${s.id}" class="hidden" style="margin-top: 10px; border-top: 1px dashed #e879f9; padding-top: 8px;">
-          <div style="background: #ffffff; border: 1px solid #f0abfc; border-radius: 4px; padding: 10px; font-size: 13px; line-height: 1.5;">
-            ${Api.sanitizeBasicHtml(s.aiAdvisor.response)}
-          </div>
-          <details style="margin-top: 8px; font-size: 12px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 4px; padding: 6px 8px;">
-            <summary style="font-weight: 700; color: #7e22ce; cursor: pointer;">
-              📜 Ver Prompt de IA Enviado ao Modelo
-            </summary>
-            <div style="margin-top: 6px; font-family: monospace; font-size: 11px; white-space: pre-wrap; background: #f3e8ff; padding: 8px; border-radius: 4px; color: #3b0764; max-height: 250px; overflow-y: auto;">
+          <div id="ai-advisor-content-${s.id}" class="hidden" style="margin-top: 10px; border-top: 1px dashed #e879f9; padding-top: 8px;">
+            <div style="background: #ffffff; border: 1px solid #f0abfc; border-radius: 4px; padding: 10px; font-size: 13px; line-height: 1.5;">
+              ${Api.sanitizeBasicHtml(s.aiAdvisor.response)}
+            </div>
+            <details style="margin-top: 8px; font-size: 12px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 4px; padding: 6px 8px;">
+              <summary style="font-weight: 700; color: #7e22ce; cursor: pointer;">
+                📜 Ver Prompt de IA Enviado ao Modelo
+              </summary>
+              <div style="margin-top: 6px; font-family: monospace; font-size: 11px; white-space: pre-wrap; background: #f3e8ff; padding: 8px; border-radius: 4px; color: #3b0764; max-height: 250px; overflow-y: auto;">
 <strong>--- SYSTEM PROMPT ---</strong>
 ${escapeHtml(s.aiAdvisor.systemPrompt || '')}
 
 <strong>--- USER PROMPT ---</strong>
 ${escapeHtml(s.aiAdvisor.userPrompt || '')}
-${s.aiAdvisor.searchedQueries?.length ? `\n<strong>--- BUSCAS WEB REALIZADAS ---</strong>\n${escapeHtml(s.aiAdvisor.searchedQueries.join('\n'))}` : ''}
-            </div>
-          </details>
+${s.aiAdvisor.searchedQueries?.length ? `\n<strong>--- CONSULTAS / FERRAMENTAS EXECUTADAS ---</strong>\n${escapeHtml(s.aiAdvisor.searchedQueries.join('\n'))}` : ''}
+              </div>
+            </details>
+          </div>
         </div>
       </div>
     `;
@@ -1186,7 +1194,7 @@ ${s.aiAdvisor.searchedQueries?.length ? `\n<strong>--- BUSCAS WEB REALIZADAS ---
     aiAdvisorHtml = `
       <div style="margin: 8px 0;" id="ai-advisor-container-${s.id}">
         <button class="btn-retro btn-sm" style="font-size: 11px; background: #fdf4ff; border-color: #d946ef; color: #86198f; font-weight: 700;" onclick="fetchAiAdvisor('${s.id}')" id="btn-ai-${s.id}">
-          <i class="fas fa-robot"></i> 🤖 Consultar Parecer da IA (Rank Mudae)
+          <i class="fas fa-robot"></i> 🤖 Consultar Parecer da IA
         </button>
       </div>
     `;
@@ -1530,9 +1538,14 @@ function toggleAiAdvisor(id) {
 async function fetchAiAdvisor(id, refresh = false) {
   const container = document.getElementById(`ai-advisor-container-${id}`);
   const btn = document.getElementById(`btn-ai-${id}`);
+  const refreshBtn = document.getElementById(`btn-ai-refresh-${id}`);
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Consultando IA (Gemma 4 & Web)...';
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Consultando IA & Web...';
+  }
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
   }
 
   try {
@@ -1540,18 +1553,19 @@ async function fetchAiAdvisor(id, refresh = false) {
       'Authorization': `Bearer ${adminToken}`,
     });
 
-    if (res.success && res.data) {
+    if (res.success && res.data && res.data.response) {
       const adv = res.data;
+      const aiModelLabel = adv.model ? ` (${escapeHtml(adv.model)})` : '';
       if (container) {
         container.innerHTML = `
           <div style="background: #fdf4ff; border: 1.5px solid #d946ef; border-radius: 6px; padding: 10px;">
             <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleAiAdvisor('${id}')">
               <div style="font-weight: 800; font-size: 13px; color: #86198f; display: flex; align-items: center; gap: 6px;">
-                <i class="fas fa-robot"></i> 🤖 Parecer da IA (Gemma 4 12B)
-                <span style="font-size: 11px; background: #fae8ff; color: #a21caf; border: 1px solid #e879f9; padding: 1px 6px; border-radius: 4px; font-weight: 700;">Rank Mudae integrado</span>
+                <i class="fas fa-robot"></i> 🤖 Parecer da IA${aiModelLabel}
+                <span style="font-size: 11px; background: #fae8ff; color: #a21caf; border: 1px solid #e879f9; padding: 1px 6px; border-radius: 4px; font-weight: 700;">Mudae + Cultura Pop & AniList</span>
               </div>
               <div style="display: flex; gap: 6px;">
-                <button class="btn-retro btn-sm" style="font-size: 11px; padding: 2px 6px;" onclick="event.stopPropagation(); fetchAiAdvisor('${id}', true)" title="Reconsultar IA">
+                <button class="btn-retro btn-sm" id="btn-ai-refresh-${id}" style="font-size: 11px; padding: 2px 6px;" onclick="event.stopPropagation(); fetchAiAdvisor('${id}', true)" title="Reconsultar IA">
                   <i class="fas fa-sync-alt"></i>
                 </button>
                 <button class="btn-retro btn-sm" style="font-size: 11px; padding: 2px 8px;" onclick="event.stopPropagation(); toggleAiAdvisor('${id}')">
@@ -1573,7 +1587,7 @@ ${escapeHtml(adv.systemPrompt || '')}
 
 <strong>--- USER PROMPT ---</strong>
 ${escapeHtml(adv.userPrompt || '')}
-${adv.searchedQueries?.length ? `\n<strong>--- BUSCAS WEB REALIZADAS ---</strong>\n${escapeHtml(adv.searchedQueries.join('\n'))}` : ''}
+${adv.searchedQueries?.length ? `\n<strong>--- CONSULTAS / FERRAMENTAS EXECUTADAS ---</strong>\n${escapeHtml(adv.searchedQueries.join('\n'))}` : ''}
                 </div>
               </details>
             </div>
@@ -1585,14 +1599,22 @@ ${adv.searchedQueries?.length ? `\n<strong>--- BUSCAS WEB REALIZADAS ---</strong
       Api.showToast(res.error?.message || 'Falha ao obter parecer da IA.', '❌');
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-robot"></i> 🤖 Consultar Parecer da IA (Rank Mudae)';
+        btn.innerHTML = '<i class="fas fa-robot"></i> 🤖 Consultar Parecer da IA';
+      }
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
       }
     }
   } catch (err) {
     Api.showToast('Erro de comunicação ao consultar IA.', '❌');
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-robot"></i> 🤖 Consultar Parecer da IA (Rank Mudae)';
+      btn.innerHTML = '<i class="fas fa-robot"></i> 🤖 Consultar Parecer da IA';
+    }
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
     }
   }
 }

@@ -76,6 +76,8 @@ const IGNORED_CONFIG_KEYS: Record<string, string> = {
   HYPERION_LLM_URL: 'URL',
   HYPERION_LLM_KEY: 'segredo',
   HYPERION_LLM_MODEL: 'modelo do conselheiro de IA, não muda a economia',
+  HYPERION_LLM_TIMEOUT_MS: 'timeout HTTP do conselheiro de IA (infraestrutura)',
+  HYPERION_LLM_MAX_TOKENS: 'limite de tokens do conselheiro de IA (infraestrutura)',
   MEDIA_DIR: 'caminho local',
   CORS_ORIGINS: 'infraestrutura',
   ENABLE_SWAGGER: 'infraestrutura',

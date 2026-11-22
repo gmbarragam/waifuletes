@@ -1953,7 +1953,14 @@ export class SuggestionService {
       isMarriedToSuggester: marriageInfo.isMarriedToSuggester,
     };
 
-    const evaluation = await this.rarityAdvisorService.evaluateRaritySuggestion(notifyData, this.redis);
-    return evaluation;
+    const result = await this.rarityAdvisorService.evaluateRaritySuggestionDetailed(notifyData, this.redis);
+    if (!result.evaluation) {
+      throw new DomainError(
+        result.error?.code || 'AI_ADVISOR_UNAVAILABLE',
+        result.error?.message || 'Não foi possível obter o parecer da IA no momento.',
+        result.error?.statusCode || 502
+      );
+    }
+    return result.evaluation;
   }
 }
